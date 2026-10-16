@@ -410,12 +410,15 @@ els.calibrateBtn.addEventListener("click", () => {
 });
 
 function handleCommandResult(result) {
-  const { action, ok, error, x, y, cmdId, networkMs, execMs } = result;
+  const { action, ok, error, x, y, cmdId, execMs } = result;
 
-  // Round-trip is measured entirely with the browser's own clock (click ->
-  // server -> agent -> server -> browser), so it doesn't depend on the two
-  // machines' clocks being in sync - unlike networkMs/execMs, which come
-  // from the agent and rely on Date.now() being reasonably synced.
+  // Round-trip and execMs are each measured with a single clock (the
+  // browser's and the agent's, respectively), so they're always reliable.
+  // We deliberately do NOT use the agent's networkMs (sentAt vs its own
+  // Date.now()) for display, because it compares two different machines'
+  // clocks - if they're not in sync (common), the result can be way off or
+  // even negative. Instead we estimate the one-way network time from the
+  // round trip, which needs no clock synchronization at all.
   let roundTripMs = null;
   if (cmdId && pendingCommands.has(cmdId)) {
     roundTripMs = Math.round(performance.now() - pendingCommands.get(cmdId).sentPerf);
@@ -436,19 +439,23 @@ function handleCommandResult(result) {
 
   if (ok) {
     showToast("Comando executado ✔");
-    showLatency({ networkMs, execMs, roundTripMs });
+    let networkEstimateMs = null;
+    if (roundTripMs != null && execMs != null) {
+      networkEstimateMs = Math.max(0, Math.round((roundTripMs - execMs) / 2));
+    }
+    showLatency({ networkEstimateMs, execMs, roundTripMs });
   } else {
     showToast(`Erro: ${error}`, "error");
   }
 }
 
-function showLatency({ networkMs, execMs, roundTripMs }) {
-  if (networkMs == null && roundTripMs == null) {
+function showLatency({ networkEstimateMs, execMs, roundTripMs }) {
+  if (networkEstimateMs == null && roundTripMs == null) {
     els.latencyBar.classList.add("hidden");
     return;
   }
   const parts = [];
-  if (networkMs != null) parts.push(`rede (clique → PC): <strong>${networkMs}ms</strong>`);
+  if (networkEstimateMs != null) parts.push(`rede (estimada): <strong>${networkEstimateMs}ms</strong>`);
   if (execMs != null) parts.push(`execução no PC: <strong>${execMs}ms</strong>`);
   if (roundTripMs != null) parts.push(`total (ida e volta): <strong>${roundTripMs}ms</strong>`);
   els.latencyBar.innerHTML = parts.join(" &nbsp;•&nbsp; ");
