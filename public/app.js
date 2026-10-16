@@ -22,8 +22,18 @@ const els = {
   btnType: document.getElementById("btnType"),
   clickFields: document.getElementById("clickFields"),
   soundFields: document.getElementById("soundFields"),
+  btnClickMode: document.getElementById("btnClickMode"),
+  coordsFields: document.getElementById("coordsFields"),
+  keysFields: document.getElementById("keysFields"),
   btnX: document.getElementById("btnX"),
   btnY: document.getElementById("btnY"),
+  modCtrl: document.getElementById("modCtrl"),
+  modAlt: document.getElementById("modAlt"),
+  modShift: document.getElementById("modShift"),
+  modWin: document.getElementById("modWin"),
+  btnKey: document.getElementById("btnKey"),
+  captureKeyBtn: document.getElementById("captureKeyBtn"),
+  captureKeyHint: document.getElementById("captureKeyHint"),
   btnSound: document.getElementById("btnSound"),
   calibrateBtn: document.getElementById("calibrateBtn"),
   calibrateHint: document.getElementById("calibrateHint"),
@@ -155,13 +165,19 @@ if (pairing) connect();
 
 // --- Dashboard: rendering buttons ----------------------------------------
 
+function buttonIcon(btn) {
+  if (btn.type === "sound") return "🔊";
+  if (btn.mode === "keys") return "⌨️";
+  return "📍";
+}
+
 function renderButtons() {
   els.buttonsGrid.innerHTML = "";
 
   buttons.forEach((btn) => {
     const el = document.createElement("div");
     el.className = "action-button";
-    el.textContent = btn.label;
+    el.textContent = `${buttonIcon(btn)} ${btn.label}`;
 
     if (editMode) {
       const removeBtn = document.createElement("button");
@@ -206,21 +222,89 @@ els.btnType.addEventListener("change", () => {
   els.soundFields.classList.toggle("hidden", isClick);
 });
 
+els.btnClickMode.addEventListener("change", () => {
+  const isKeys = els.btnClickMode.value === "keys";
+  els.coordsFields.classList.toggle("hidden", isKeys);
+  els.keysFields.classList.toggle("hidden", !isKeys);
+});
+
 function openEditPanel(btn) {
   editingButtonId = btn ? btn.id : null;
   els.btnLabel.value = btn ? btn.label : "";
   els.btnType.value = btn ? btn.type : "click";
+  els.btnClickMode.value = btn && btn.mode === "keys" ? "keys" : "coords";
   els.btnX.value = btn && btn.x != null ? btn.x : "";
   els.btnY.value = btn && btn.y != null ? btn.y : "";
+  const mods = (btn && btn.modifiers) || [];
+  els.modCtrl.checked = mods.includes("ctrl");
+  els.modAlt.checked = mods.includes("alt");
+  els.modShift.checked = mods.includes("shift");
+  els.modWin.checked = mods.includes("win");
+  els.btnKey.value = btn && btn.key ? btn.key : "";
   els.btnSound.value = btn && btn.systemSound ? btn.systemSound : "";
   els.calibrateHint.textContent = "";
+  els.captureKeyHint.textContent = 'Dica: clique em "Capturar tecla" e pressione a combinação desejada no seu teclado, ou digite manualmente o nome da tecla (ex: F5, Enter, Tab, Delete, A).';
   els.btnType.dispatchEvent(new Event("change"));
+  els.btnClickMode.dispatchEvent(new Event("change"));
   els.editPanel.classList.remove("hidden");
 }
 
 els.cancelEditBtn.addEventListener("click", () => {
   els.editPanel.classList.add("hidden");
   editingButtonId = null;
+});
+
+// --- Key combo capture --------------------------------------------------
+
+const KEY_NAME_MAP = {
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  Escape: "Esc",
+  " ": "Space",
+};
+const MODIFIER_KEYS = new Set(["Control", "Alt", "Shift", "Meta"]);
+
+function normalizeKeyName(key) {
+  if (KEY_NAME_MAP[key]) return KEY_NAME_MAP[key];
+  if (key.length === 1) return key.toUpperCase();
+  return key; // e.g. "F5", "Enter", "Tab", "Delete", "Home"...
+}
+
+let capturingKey = false;
+
+els.captureKeyBtn.addEventListener("click", () => {
+  if (capturingKey) return;
+  capturingKey = true;
+  els.captureKeyBtn.classList.add("listening");
+  els.captureKeyHint.textContent = "Pressione a combinação de teclas agora...";
+
+  const onKeyDown = (e) => {
+    if (MODIFIER_KEYS.has(e.key)) return; // wait for the "real" key
+    e.preventDefault();
+    e.stopPropagation();
+
+    els.modCtrl.checked = e.ctrlKey;
+    els.modAlt.checked = e.altKey;
+    els.modShift.checked = e.shiftKey;
+    els.modWin.checked = e.metaKey;
+    els.btnKey.value = normalizeKeyName(e.key);
+
+    const parts = [];
+    if (e.ctrlKey) parts.push("Ctrl");
+    if (e.altKey) parts.push("Alt");
+    if (e.shiftKey) parts.push("Shift");
+    if (e.metaKey) parts.push("Win");
+    parts.push(els.btnKey.value);
+    els.captureKeyHint.textContent = `Capturado: ${parts.join(" + ")}`;
+
+    capturingKey = false;
+    els.captureKeyBtn.classList.remove("listening");
+    window.removeEventListener("keydown", onKeyDown, true);
+  };
+
+  window.addEventListener("keydown", onKeyDown, true);
 });
 
 els.saveButtonBtn.addEventListener("click", () => {
@@ -233,14 +317,26 @@ els.saveButtonBtn.addEventListener("click", () => {
   }
 
   let newBtn;
-  if (type === "click") {
+  if (type === "click" && els.btnClickMode.value === "keys") {
+    const key = els.btnKey.value.trim();
+    if (!key) {
+      showToast('Informe a tecla (ou use "Capturar tecla")', "error");
+      return;
+    }
+    const modifiers = [];
+    if (els.modCtrl.checked) modifiers.push("ctrl");
+    if (els.modAlt.checked) modifiers.push("alt");
+    if (els.modShift.checked) modifiers.push("shift");
+    if (els.modWin.checked) modifiers.push("win");
+    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "keys", modifiers, key };
+  } else if (type === "click") {
     const x = Number(els.btnX.value);
     const y = Number(els.btnY.value);
     if (Number.isNaN(x) || Number.isNaN(y)) {
       showToast("Preencha X e Y (ou use Calibrar)", "error");
       return;
     }
-    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, x, y };
+    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "coords", x, y };
   } else {
     newBtn = {
       id: editingButtonId || crypto.randomUUID(),
@@ -340,7 +436,9 @@ function showLatency({ networkMs, execMs, roundTripMs }) {
 
 function sendButtonCommand(btn) {
   let action;
-  if (btn.type === "click") {
+  if (btn.type === "click" && btn.mode === "keys") {
+    action = { type: "keypress", modifiers: btn.modifiers || [], key: btn.key };
+  } else if (btn.type === "click") {
     action = { type: "click", x: btn.x, y: btn.y };
   } else {
     action = btn.systemSound

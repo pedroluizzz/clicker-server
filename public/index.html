@@ -62,14 +62,39 @@
         </div>
 
         <div id="clickFields">
-          <div class="form-row coords">
-            <label>X</label>
-            <input id="btnX" type="number" />
-            <label>Y</label>
-            <input id="btnY" type="number" />
-            <button id="calibrateBtn" class="secondary" type="button">📍 Calibrar (4s)</button>
+          <div class="form-row">
+            <label>Como disparar</label>
+            <select id="btnClickMode">
+              <option value="coords">📍 Clique em uma posição da tela (coordenadas)</option>
+              <option value="keys">⌨️ Combinação de teclas (atalho)</option>
+            </select>
           </div>
-          <p class="hint" id="calibrateHint"></p>
+
+          <div id="coordsFields">
+            <div class="form-row coords">
+              <label>X</label>
+              <input id="btnX" type="number" />
+              <label>Y</label>
+              <input id="btnY" type="number" />
+              <button id="calibrateBtn" class="secondary" type="button">📍 Calibrar (4s)</button>
+            </div>
+            <p class="hint" id="calibrateHint"></p>
+          </div>
+
+          <div id="keysFields" class="hidden">
+            <div class="form-row modifiers">
+              <label><input type="checkbox" id="modCtrl" /> Ctrl</label>
+              <label><input type="checkbox" id="modAlt" /> Alt</label>
+              <label><input type="checkbox" id="modShift" /> Shift</label>
+              <label><input type="checkbox" id="modWin" /> Win</label>
+            </div>
+            <div class="form-row coords">
+              <label>Tecla</label>
+              <input id="btnKey" type="text" placeholder="ex: F5, Enter, S, Tab" style="width: 140px" />
+              <button id="captureKeyBtn" class="secondary" type="button">🎹 Capturar tecla</button>
+            </div>
+            <p class="hint" id="captureKeyHint">Dica: clique em "Capturar tecla" e pressione a combinação desejada no seu teclado, ou digite manualmente o nome da tecla (ex: F5, Enter, Tab, Delete, A).</p>
+          </div>
         </div>
 
         <div id="soundFields" class="hidden">

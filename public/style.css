@@ -158,3 +158,22 @@ button.secondary:hover { background: #343a68; color: var(--text); }
   text-align: center;
 }
 .latency-bar strong { color: var(--accent-light); }
+
+.form-row.modifiers {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+}
+.form-row.modifiers label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+#captureKeyBtn.listening {
+  background: var(--red);
+  color: white;
+}
