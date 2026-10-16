@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Controle Remoto</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🎛️ Controle Remoto</h1>
+    <div class="status">
+      <span id="statusDot" class="dot offline"></span>
+      <span id="statusText">Desconectado</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="pairingSection" class="card">
+      <h2>Parear com o PC alvo</h2>
+      <p class="hint">Pegue o <strong>Device ID</strong> e o <strong>Secret</strong> exibidos no console do agente, rodando no PC que vai receber os comandos.</p>
+      <div class="form-row">
+        <label>Device ID</label>
+        <input id="deviceIdInput" type="text" placeholder="ex: a1b2c3" autocomplete="off" />
+      </div>
+      <div class="form-row">
+        <label>Secret</label>
+        <input id="secretInput" type="text" placeholder="chave secreta" autocomplete="off" />
+      </div>
+      <div class="form-row">
+        <label>Servidor</label>
+        <input id="serverUrlInput" type="text" placeholder="https://seu-servidor.onrender.com" />
+      </div>
+      <button id="connectBtn">Conectar</button>
+    </section>
+
+    <section id="dashboardSection" class="card hidden">
+      <div class="dashboard-header">
+        <h2>Botões</h2>
+        <div>
+          <button id="editToggleBtn" class="secondary">Editar botões</button>
+          <button id="disconnectBtn" class="secondary">Trocar PC</button>
+        </div>
+      </div>
+
+      <div id="buttonsGrid" class="buttons-grid"></div>
+
+      <div id="editPanel" class="edit-panel hidden">
+        <h3>Adicionar / editar botão</h3>
+        <div class="form-row">
+          <label>Nome do botão</label>
+          <input id="btnLabel" type="text" placeholder="ex: Avançar slide" />
+        </div>
+        <div class="form-row">
+          <label>Tipo de ação</label>
+          <select id="btnType">
+            <option value="click">Clique real na tela</option>
+            <option value="sound">Tocar som</option>
+          </select>
+        </div>
+
+        <div id="clickFields">
+          <div class="form-row coords">
+            <label>X</label>
+            <input id="btnX" type="number" />
+            <label>Y</label>
+            <input id="btnY" type="number" />
+            <button id="calibrateBtn" class="secondary" type="button">📍 Calibrar (4s)</button>
+          </div>
+          <p class="hint" id="calibrateHint"></p>
+        </div>
+
+        <div id="soundFields" class="hidden">
+          <div class="form-row">
+            <label>Som</label>
+            <select id="btnSound">
+              <option value="">Tom sonoro (bip)</option>
+              <option value="Asterisk">Som do sistema: Asterisk</option>
+              <option value="Exclamation">Som do sistema: Exclamation</option>
+              <option value="Hand">Som do sistema: Hand</option>
+              <option value="Question">Som do sistema: Question</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <button id="saveButtonBtn">Salvar botão</button>
+          <button id="cancelEditBtn" class="secondary" type="button">Cancelar</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

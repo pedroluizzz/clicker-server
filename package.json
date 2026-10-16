@@ -1,0 +1,16 @@
+{
+  "name": "clicker-server",
+  "version": "1.0.0",
+  "description": "Relay server that connects web buttons to a remote agent (click/sound) over the internet",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
