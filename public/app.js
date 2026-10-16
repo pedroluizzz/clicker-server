@@ -243,7 +243,7 @@ function openEditPanel(btn) {
   els.btnKey.value = btn && btn.key ? btn.key : "";
   els.btnSound.value = btn && btn.systemSound ? btn.systemSound : "";
   els.calibrateHint.textContent = "";
-  els.captureKeyHint.textContent = 'Dica: clique em "Capturar tecla" e pressione a combinação desejada no seu teclado, ou digite manualmente o nome da tecla (ex: F5, Enter, Tab, Delete, A).';
+  els.captureKeyHint.textContent = 'Dica: clique em "Capturar tecla" e pressione a combinação desejada no seu teclado, ou digite manualmente o nome da tecla (ex: F5, Enter, Tab, Delete, A, Numpad1).';
   els.btnType.dispatchEvent(new Event("change"));
   els.btnClickMode.dispatchEvent(new Event("change"));
   els.editPanel.classList.remove("hidden");
@@ -264,12 +264,35 @@ const KEY_NAME_MAP = {
   Escape: "Esc",
   " ": "Space",
 };
+const NUMPAD_CODE_MAP = {
+  Numpad0: "Numpad0",
+  Numpad1: "Numpad1",
+  Numpad2: "Numpad2",
+  Numpad3: "Numpad3",
+  Numpad4: "Numpad4",
+  Numpad5: "Numpad5",
+  Numpad6: "Numpad6",
+  Numpad7: "Numpad7",
+  Numpad8: "Numpad8",
+  Numpad9: "Numpad9",
+  NumpadAdd: "NumpadAdd",
+  NumpadSubtract: "NumpadSubtract",
+  NumpadMultiply: "NumpadMultiply",
+  NumpadDivide: "NumpadDivide",
+  NumpadDecimal: "NumpadDecimal",
+  NumpadEnter: "NumpadEnter",
+};
 const MODIFIER_KEYS = new Set(["Control", "Alt", "Shift", "Meta"]);
 
-function normalizeKeyName(key) {
-  if (KEY_NAME_MAP[key]) return KEY_NAME_MAP[key];
-  if (key.length === 1) return key.toUpperCase();
-  return key; // e.g. "F5", "Enter", "Tab", "Delete", "Home"...
+function normalizeKeyName(e) {
+  // The browser reports the same e.key ("1") for both the regular number row
+  // and the numeric keypad - e.code tells them apart (e.g. "Numpad1" vs
+  // "Digit1"), which matters because macro tools often bind shortcuts
+  // specifically to numpad keys.
+  if (NUMPAD_CODE_MAP[e.code]) return NUMPAD_CODE_MAP[e.code];
+  if (KEY_NAME_MAP[e.key]) return KEY_NAME_MAP[e.key];
+  if (e.key.length === 1) return e.key.toUpperCase();
+  return e.key; // e.g. "F5", "Enter", "Tab", "Delete", "Home"...
 }
 
 let capturingKey = false;
@@ -289,7 +312,7 @@ els.captureKeyBtn.addEventListener("click", () => {
     els.modAlt.checked = e.altKey;
     els.modShift.checked = e.shiftKey;
     els.modWin.checked = e.metaKey;
-    els.btnKey.value = normalizeKeyName(e.key);
+    els.btnKey.value = normalizeKeyName(e);
 
     const parts = [];
     if (e.ctrlKey) parts.push("Ctrl");
