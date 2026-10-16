@@ -1,8 +1,8 @@
 // app.js - frontend logic for the remote control web page.
 // Talks to the relay server over Socket.IO. Supports pairing with SEVERAL
-// PCs at once (one browser page -> many agents), persisted in localStorage,
-// and buttons that can broadcast the same command to multiple PCs
-// simultaneously ("Enviar para" multi-select in the edit panel).
+// PCs at once (one browser page -> many agents), persisted in localStorage.
+// Every button always sends its command to ALL currently added PCs - if two
+// PCs are paired, every button fires on both automatically.
 
 const MAX_BUTTONS = 5;
 
@@ -20,11 +20,11 @@ const els = {
   serverUrlInput: document.getElementById("serverUrlInput"),
   dashboardSection: document.getElementById("dashboardSection"),
   noDevicesHint: document.getElementById("noDevicesHint"),
+  multiDeviceHint: document.getElementById("multiDeviceHint"),
   editToggleBtn: document.getElementById("editToggleBtn"),
   buttonsGrid: document.getElementById("buttonsGrid"),
   editPanel: document.getElementById("editPanel"),
   btnLabel: document.getElementById("btnLabel"),
-  targetChecklist: document.getElementById("targetChecklist"),
   btnType: document.getElementById("btnType"),
   clickFields: document.getElementById("clickFields"),
   soundFields: document.getElementById("soundFields"),
@@ -111,7 +111,7 @@ function migrateOldDataIfNeeded() {
         saveServerUrl(serverUrl);
 
         buttons = buttons.map((b) => {
-          const nb = { ...b, targets: [localId] };
+          const nb = { ...b };
           if (b.type === "click" && b.x != null && b.y != null) {
             nb.mode = "coords";
             nb.coordsByTarget = { [localId]: { x: b.x, y: b.y } };
@@ -247,6 +247,7 @@ function renderDevices() {
   });
 
   els.noDevicesHint.classList.toggle("hidden", devices.length > 0);
+  els.multiDeviceHint.classList.toggle("hidden", devices.length < 2);
   els.buttonsGrid.classList.toggle("hidden", devices.length === 0);
   els.editToggleBtn.disabled = devices.length === 0;
 
@@ -303,17 +304,14 @@ function removeDevice(localId) {
     deviceStatus.delete(device.deviceId);
   }
 
-  // Drop this device from any buttons that targeted it.
+  // Drop any saved coordinates for this device from click/coords buttons -
+  // buttons themselves always target every current device, so no "targets"
+  // list needs updating, just the per-device coordinates.
   buttons = buttons.map((b) => {
-    if (!b.targets) return b;
-    const targets = b.targets.filter((t) => t !== localId);
-    const nb = { ...b, targets };
-    if (nb.coordsByTarget && nb.coordsByTarget[localId]) {
-      const cbt = { ...nb.coordsByTarget };
-      delete cbt[localId];
-      nb.coordsByTarget = cbt;
-    }
-    return nb;
+    if (!b.coordsByTarget || !b.coordsByTarget[localId]) return b;
+    const cbt = { ...b.coordsByTarget };
+    delete cbt[localId];
+    return { ...b, coordsByTarget: cbt };
   });
   saveButtons();
 
@@ -335,9 +333,7 @@ function renderButtons() {
   buttons.forEach((btn) => {
     const el = document.createElement("div");
     el.className = "action-button";
-    const targetCount = (btn.targets || []).length;
-    const suffix = targetCount > 1 ? ` (${targetCount} PCs)` : "";
-    el.textContent = `${buttonIcon(btn)} ${btn.label}${suffix}`;
+    el.textContent = `${buttonIcon(btn)} ${btn.label}`;
 
     if (editMode) {
       const removeBtn = document.createElement("button");
@@ -374,50 +370,25 @@ els.editToggleBtn.addEventListener("click", () => {
   renderButtons();
 });
 
-// --- Edit panel: targets --------------------------------------------------
-
-function renderTargetChecklist(selectedIds) {
-  els.targetChecklist.innerHTML = "";
-  devices.forEach((d) => {
-    const label = document.createElement("label");
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = d.id;
-    checkbox.checked = selectedIds.includes(d.id);
-    checkbox.addEventListener("change", onTargetsChanged);
-    label.appendChild(checkbox);
-    label.appendChild(document.createTextNode(" " + d.nickname));
-    els.targetChecklist.appendChild(label);
-  });
-}
-
-function getSelectedTargets() {
-  return Array.from(els.targetChecklist.querySelectorAll("input[type=checkbox]:checked")).map((cb) => cb.value);
-}
-
-function onTargetsChanged() {
-  if (els.btnType.value === "click" && els.btnClickMode.value === "coords") {
-    renderCoordsTargetsTable(getSelectedTargets());
-  }
-}
-
 // --- Edit panel: coordinates per target -----------------------------------
+//
+// Every button targets ALL currently added devices, so when the action is a
+// screen click, we need one X/Y pair per device (screens/resolutions can
+// differ) - this renders one row per device, always.
 
-function renderCoordsTargetsTable(selectedIds) {
+function renderCoordsTargetsTable() {
   els.coordsTargetsTable.innerHTML = "";
 
-  if (selectedIds.length === 0) {
+  if (devices.length === 0) {
     const hint = document.createElement("p");
     hint.className = "hint";
-    hint.textContent = 'Selecione ao menos um PC em "Enviar para".';
+    hint.textContent = "Adicione um PC primeiro.";
     els.coordsTargetsTable.appendChild(hint);
     return;
   }
 
-  selectedIds.forEach((targetId) => {
-    const device = devices.find((d) => d.id === targetId);
-    if (!device) return;
-
+  devices.forEach((device) => {
+    const targetId = device.id;
     const coords = coordsByTargetDraft[targetId] || {};
     const row = document.createElement("div");
     row.className = "coords-target-row";
@@ -498,7 +469,7 @@ els.btnClickMode.addEventListener("change", () => {
   const isKeys = els.btnClickMode.value === "keys";
   els.coordsFields.classList.toggle("hidden", isKeys);
   els.keysFields.classList.toggle("hidden", !isKeys);
-  if (!isKeys) renderCoordsTargetsTable(getSelectedTargets());
+  if (!isKeys) renderCoordsTargetsTable();
 });
 
 function openEditPanel(btn) {
@@ -507,12 +478,8 @@ function openEditPanel(btn) {
   els.btnType.value = btn ? btn.type : "click";
   els.btnClickMode.value = btn && btn.mode === "keys" ? "keys" : "coords";
 
-  const selectedTargets =
-    btn && btn.targets ? btn.targets.filter((t) => devices.some((d) => d.id === t)) : devices.map((d) => d.id);
   coordsByTargetDraft = btn && btn.coordsByTarget ? JSON.parse(JSON.stringify(btn.coordsByTarget)) : {};
-
-  renderTargetChecklist(selectedTargets);
-  renderCoordsTargetsTable(selectedTargets);
+  renderCoordsTargetsTable();
 
   const mods = (btn && btn.modifiers) || [];
   els.modCtrl.checked = mods.includes("ctrl");
@@ -615,14 +582,13 @@ els.captureKeyBtn.addEventListener("click", () => {
 els.saveButtonBtn.addEventListener("click", () => {
   const label = els.btnLabel.value.trim();
   const type = els.btnType.value;
-  const targets = getSelectedTargets();
 
   if (!label) {
     showToast("Dê um nome ao botão", "error");
     return;
   }
-  if (targets.length === 0) {
-    showToast('Selecione ao menos um PC em "Enviar para"', "error");
+  if (devices.length === 0) {
+    showToast("Adicione um PC primeiro", "error");
     return;
   }
 
@@ -638,30 +604,29 @@ els.saveButtonBtn.addEventListener("click", () => {
     if (els.modAlt.checked) modifiers.push("alt");
     if (els.modShift.checked) modifiers.push("shift");
     if (els.modWin.checked) modifiers.push("win");
-    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "keys", modifiers, key, targets };
+    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "keys", modifiers, key };
   } else if (type === "click") {
     const coordsByTarget = {};
     let missing = false;
-    targets.forEach((tId) => {
-      const xInput = els.coordsTargetsTable.querySelector(`input[data-coord="x"][data-target="${tId}"]`);
-      const yInput = els.coordsTargetsTable.querySelector(`input[data-coord="y"][data-target="${tId}"]`);
+    devices.forEach((device) => {
+      const xInput = els.coordsTargetsTable.querySelector(`input[data-coord="x"][data-target="${device.id}"]`);
+      const yInput = els.coordsTargetsTable.querySelector(`input[data-coord="y"][data-target="${device.id}"]`);
       const x = xInput ? Number(xInput.value) : NaN;
       const y = yInput ? Number(yInput.value) : NaN;
       if (Number.isNaN(x) || Number.isNaN(y)) missing = true;
-      coordsByTarget[tId] = { x, y };
+      coordsByTarget[device.id] = { x, y };
     });
     if (missing) {
-      showToast("Preencha X e Y para todos os PCs selecionados (ou use Calibrar)", "error");
+      showToast("Preencha X e Y para todos os PCs (ou use Calibrar)", "error");
       return;
     }
-    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "coords", coordsByTarget, targets };
+    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "coords", coordsByTarget };
   } else {
     newBtn = {
       id: editingButtonId || crypto.randomUUID(),
       label,
       type,
       systemSound: els.btnSound.value || null,
-      targets,
     };
   }
 
@@ -740,12 +705,11 @@ function finalizeBatch(batchId) {
   els.latencyBar.classList.remove("hidden");
 }
 
-// --- Sending commands (broadcast-aware) ------------------------------------
+// --- Sending commands (always to every added device) -----------------------
 
 function sendButtonCommand(btn) {
-  const targets = (btn.targets || []).map((tId) => devices.find((d) => d.id === tId)).filter(Boolean);
-  if (targets.length === 0) {
-    showToast("Este botão não tem nenhum PC configurado", "error");
+  if (devices.length === 0) {
+    showToast("Nenhum PC adicionado", "error");
     return;
   }
   if (!socket) {
@@ -754,14 +718,21 @@ function sendButtonCommand(btn) {
   }
 
   const batchId = crypto.randomUUID();
-  batches.set(batchId, { total: targets.length, results: [] });
+  batches.set(batchId, { total: devices.length, results: [] });
 
-  targets.forEach((device) => {
+  devices.forEach((device) => {
     let action;
     if (btn.type === "click" && btn.mode === "keys") {
       action = { type: "keypress", modifiers: btn.modifiers || [], key: btn.key };
     } else if (btn.type === "click") {
       const coords = (btn.coordsByTarget && btn.coordsByTarget[device.id]) || {};
+      if (coords.x == null || coords.y == null || Number.isNaN(coords.x) || Number.isNaN(coords.y)) {
+        // This device was added after the button was created (or coords
+        // were never set for it) - skip sending and report it so the user
+        // knows to open the button and calibrate for this PC.
+        recordBatchResult(batchId, { nickname: device.nickname, ok: false, error: "falta calibrar para este PC" });
+        return;
+      }
       action = { type: "click", x: coords.x, y: coords.y };
     } else {
       action = btn.systemSound

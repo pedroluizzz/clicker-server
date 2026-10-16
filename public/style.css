@@ -220,19 +220,6 @@ button.secondary:hover { background: #343a68; color: var(--text); }
   border-radius: 6px;
 }
 
-.target-checklist {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-}
-.target-checklist label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text);
-  font-size: 0.95rem;
-}
-
 .coords-target-row {
   display: flex;
   align-items: center;
