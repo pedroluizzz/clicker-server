@@ -192,3 +192,53 @@ button.secondary:hover { background: #343a68; color: var(--text); }
   background: var(--red);
   color: white;
 }
+
+.devices-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.device-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #11142a;
+  border: 1px solid #2a2f54;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.device-nickname { font-weight: 600; flex: 1; }
+
+.device-id-badge {
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: #1f2342;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.target-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.target-checklist label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.coords-target-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.coords-target-row label { min-width: 110px; color: var(--text); }
+.coords-target-row input { width: 80px; }

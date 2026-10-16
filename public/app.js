@@ -1,32 +1,37 @@
 // app.js - frontend logic for the remote control web page.
-// Talks to the relay server over Socket.IO and persists pairing +
-// button configuration in localStorage so the user doesn't have to
-// re-enter everything every time.
+// Talks to the relay server over Socket.IO. Supports pairing with SEVERAL
+// PCs at once (one browser page -> many agents), persisted in localStorage,
+// and buttons that can broadcast the same command to multiple PCs
+// simultaneously ("Enviar para" multi-select in the edit panel).
 
 const MAX_BUTTONS = 5;
 
 const els = {
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
-  pairingSection: document.getElementById("pairingSection"),
-  dashboardSection: document.getElementById("dashboardSection"),
-  deviceIdInput: document.getElementById("deviceIdInput"),
-  secretInput: document.getElementById("secretInput"),
+  devicesList: document.getElementById("devicesList"),
+  addDeviceToggleBtn: document.getElementById("addDeviceToggleBtn"),
+  addDeviceForm: document.getElementById("addDeviceForm"),
+  newDeviceNickname: document.getElementById("newDeviceNickname"),
+  newDeviceId: document.getElementById("newDeviceId"),
+  newDeviceSecret: document.getElementById("newDeviceSecret"),
+  saveDeviceBtn: document.getElementById("saveDeviceBtn"),
+  cancelDeviceBtn: document.getElementById("cancelDeviceBtn"),
   serverUrlInput: document.getElementById("serverUrlInput"),
-  connectBtn: document.getElementById("connectBtn"),
-  disconnectBtn: document.getElementById("disconnectBtn"),
+  dashboardSection: document.getElementById("dashboardSection"),
+  noDevicesHint: document.getElementById("noDevicesHint"),
   editToggleBtn: document.getElementById("editToggleBtn"),
   buttonsGrid: document.getElementById("buttonsGrid"),
   editPanel: document.getElementById("editPanel"),
   btnLabel: document.getElementById("btnLabel"),
+  targetChecklist: document.getElementById("targetChecklist"),
   btnType: document.getElementById("btnType"),
   clickFields: document.getElementById("clickFields"),
   soundFields: document.getElementById("soundFields"),
   btnClickMode: document.getElementById("btnClickMode"),
   coordsFields: document.getElementById("coordsFields"),
+  coordsTargetsTable: document.getElementById("coordsTargetsTable"),
   keysFields: document.getElementById("keysFields"),
-  btnX: document.getElementById("btnX"),
-  btnY: document.getElementById("btnY"),
   modCtrl: document.getElementById("modCtrl"),
   modAlt: document.getElementById("modAlt"),
   modShift: document.getElementById("modShift"),
@@ -35,8 +40,6 @@ const els = {
   captureKeyBtn: document.getElementById("captureKeyBtn"),
   captureKeyHint: document.getElementById("captureKeyHint"),
   btnSound: document.getElementById("btnSound"),
-  calibrateBtn: document.getElementById("calibrateBtn"),
-  calibrateHint: document.getElementById("calibrateHint"),
   saveButtonBtn: document.getElementById("saveButtonBtn"),
   cancelEditBtn: document.getElementById("cancelEditBtn"),
   toast: document.getElementById("toast"),
@@ -44,24 +47,41 @@ const els = {
 };
 
 let socket = null;
-const pendingCommands = new Map(); // cmdId -> { sentPerf }
 let editMode = false;
 let editingButtonId = null;
-let pairing = loadPairing();
+let coordsByTargetDraft = {}; // deviceLocalId -> {x, y}, while the edit panel is open
+
+// cmdId -> { sentPerf, batchId?, nickname?, calibrateTargetId? }
+const pendingCommands = new Map();
+// batchId -> { total, results: [{ nickname, ok, error, execMs, roundTripMs }] }
+const batches = new Map();
+
+const deviceStatus = new Map(); // deviceId (from the agent) -> boolean online
+
+let serverUrl = loadServerUrl();
+let devices = loadDevices(); // [{ id, nickname, deviceId, secret }]
 let buttons = loadButtons();
 
-function loadPairing() {
+migrateOldDataIfNeeded();
+
+// --- Persistence ------------------------------------------------------
+
+function loadServerUrl() {
+  return localStorage.getItem("clicker.serverUrl") || window.location.origin;
+}
+function saveServerUrl(url) {
+  localStorage.setItem("clicker.serverUrl", url);
+}
+function loadDevices() {
   try {
-    return JSON.parse(localStorage.getItem("clicker.pairing")) || null;
+    return JSON.parse(localStorage.getItem("clicker.devices")) || [];
   } catch {
-    return null;
+    return [];
   }
 }
-
-function savePairing(p) {
-  localStorage.setItem("clicker.pairing", JSON.stringify(p));
+function saveDevices() {
+  localStorage.setItem("clicker.devices", JSON.stringify(devices));
 }
-
 function loadButtons() {
   try {
     return JSON.parse(localStorage.getItem("clicker.buttons")) || [];
@@ -69,16 +89,56 @@ function loadButtons() {
     return [];
   }
 }
-
 function saveButtons() {
   localStorage.setItem("clicker.buttons", JSON.stringify(buttons));
+}
+
+// Converts data saved by earlier versions of this page (a single
+// deviceId/secret pairing, buttons with bare x/y) into the new multi-device
+// format, so existing users don't lose their setup.
+function migrateOldDataIfNeeded() {
+  const oldPairingRaw = localStorage.getItem("clicker.pairing");
+  if (!oldPairingRaw) return;
+
+  if (devices.length === 0) {
+    try {
+      const oldPairing = JSON.parse(oldPairingRaw);
+      if (oldPairing && oldPairing.deviceId && oldPairing.secret) {
+        const localId = crypto.randomUUID();
+        devices = [{ id: localId, nickname: "PC 1", deviceId: oldPairing.deviceId, secret: oldPairing.secret }];
+        serverUrl = oldPairing.serverUrl || serverUrl;
+        saveDevices();
+        saveServerUrl(serverUrl);
+
+        buttons = buttons.map((b) => {
+          const nb = { ...b, targets: [localId] };
+          if (b.type === "click" && b.x != null && b.y != null) {
+            nb.mode = "coords";
+            nb.coordsByTarget = { [localId]: { x: b.x, y: b.y } };
+            delete nb.x;
+            delete nb.y;
+          }
+          return nb;
+        });
+        saveButtons();
+      }
+    } catch {
+      /* ignore malformed old data */
+    }
+  }
+
+  localStorage.removeItem("clicker.pairing");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 function showToast(message, type = "success") {
   els.toast.textContent = message;
   els.toast.className = `toast ${type}`;
   clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => els.toast.classList.add("hidden"), 3000);
+  showToast._t = setTimeout(() => els.toast.classList.add("hidden"), 3500);
 }
 
 function setStatus(state, text) {
@@ -86,82 +146,180 @@ function setStatus(state, text) {
   els.statusText.textContent = text;
 }
 
-// --- Pairing / connection -------------------------------------------------
+// --- Connection: one socket, joined to every paired device -----------------
 
-function defaultServerUrl() {
-  return window.location.origin;
-}
+els.serverUrlInput.value = serverUrl;
 
-if (pairing) {
-  els.deviceIdInput.value = pairing.deviceId;
-  els.secretInput.value = pairing.secret;
-  els.serverUrlInput.value = pairing.serverUrl || defaultServerUrl();
-} else {
-  els.serverUrlInput.value = defaultServerUrl();
-}
-
-els.connectBtn.addEventListener("click", () => {
-  const deviceId = els.deviceIdInput.value.trim();
-  const secret = els.secretInput.value.trim();
-  const serverUrl = els.serverUrlInput.value.trim() || defaultServerUrl();
-
-  if (!deviceId || !secret) {
-    showToast("Preencha Device ID e Secret", "error");
-    return;
-  }
-
-  pairing = { deviceId, secret, serverUrl };
-  savePairing(pairing);
+els.serverUrlInput.addEventListener("change", () => {
+  serverUrl = els.serverUrlInput.value.trim() || window.location.origin;
+  saveServerUrl(serverUrl);
   connect();
-});
-
-els.disconnectBtn.addEventListener("click", () => {
-  if (socket) socket.disconnect();
-  localStorage.removeItem("clicker.pairing");
-  pairing = null;
-  els.dashboardSection.classList.add("hidden");
-  els.pairingSection.classList.remove("hidden");
-  setStatus("offline", "Desconectado");
 });
 
 function connect() {
   if (socket) socket.disconnect();
+  deviceStatus.clear();
+
+  if (devices.length === 0) {
+    renderDevices();
+    return;
+  }
 
   setStatus("connecting", "Conectando...");
-  socket = io(pairing.serverUrl, { transports: ["websocket", "polling"] });
+  socket = io(serverUrl, { transports: ["websocket", "polling"] });
 
   socket.on("connect", () => {
-    socket.emit("web:join", { deviceId: pairing.deviceId, secret: pairing.secret }, (res) => {
-      if (!res || !res.ok) {
-        showToast((res && res.error) || "Falha ao parear", "error");
-        setStatus("offline", "Erro de pareamento");
-        return;
-      }
-      els.pairingSection.classList.add("hidden");
-      els.dashboardSection.classList.remove("hidden");
-      setStatus(res.online ? "online" : "offline", res.online ? "PC conectado" : "PC offline (aguardando agente)");
-      renderButtons();
-    });
+    devices.forEach((d) => joinDevice(d));
   });
 
-  socket.on("device:status", ({ online }) => {
-    setStatus(online ? "online" : "offline", online ? "PC conectado" : "PC offline");
+  socket.on("device:status", ({ deviceId, online }) => {
+    deviceStatus.set(deviceId, online);
+    renderDevices();
   });
 
-  socket.on("command:result", (result) => {
-    handleCommandResult(result);
-  });
+  socket.on("command:result", (result) => handleCommandResult(result));
 
   socket.on("connect_error", () => {
     setStatus("offline", "Não foi possível conectar ao servidor");
   });
 
   socket.on("disconnect", () => {
+    deviceStatus.clear();
+    renderDevices();
     setStatus("offline", "Desconectado do servidor");
   });
 }
 
-if (pairing) connect();
+function joinDevice(device) {
+  if (!socket) return;
+  socket.emit("web:join", { deviceId: device.deviceId, secret: device.secret }, (res) => {
+    if (!res || !res.ok) {
+      showToast(`${device.nickname}: ${(res && res.error) || "Falha ao parear"}`, "error");
+      return;
+    }
+    deviceStatus.set(device.deviceId, res.online);
+    renderDevices();
+  });
+}
+
+connect();
+
+// --- Device management --------------------------------------------------
+
+function updateHeaderSummary() {
+  const total = devices.length;
+  if (total === 0) {
+    setStatus("offline", "Nenhum PC adicionado");
+    return;
+  }
+  const onlineCount = devices.filter((d) => deviceStatus.get(d.deviceId)).length;
+  if (onlineCount === total) setStatus("online", `${onlineCount}/${total} PCs online`);
+  else if (onlineCount === 0) setStatus("offline", `0/${total} PCs online`);
+  else setStatus("connecting", `${onlineCount}/${total} PCs online`);
+}
+
+function renderDevices() {
+  els.devicesList.innerHTML = "";
+
+  if (devices.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = 'Nenhum PC adicionado ainda. Clique em "+ Adicionar PC".';
+    els.devicesList.appendChild(empty);
+  }
+
+  devices.forEach((d) => {
+    const online = deviceStatus.get(d.deviceId);
+    const row = document.createElement("div");
+    row.className = "device-row";
+    row.innerHTML =
+      `<span class="dot ${online ? "online" : "offline"}"></span>` +
+      `<span class="device-nickname">${escapeHtml(d.nickname)}</span>` +
+      `<span class="device-id-badge">${escapeHtml(d.deviceId)}</span>`;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "remove";
+    removeBtn.textContent = "✕";
+    removeBtn.addEventListener("click", () => removeDevice(d.id));
+    row.appendChild(removeBtn);
+
+    els.devicesList.appendChild(row);
+  });
+
+  els.noDevicesHint.classList.toggle("hidden", devices.length > 0);
+  els.buttonsGrid.classList.toggle("hidden", devices.length === 0);
+  els.editToggleBtn.disabled = devices.length === 0;
+
+  updateHeaderSummary();
+}
+
+els.addDeviceToggleBtn.addEventListener("click", () => {
+  els.addDeviceForm.classList.toggle("hidden");
+});
+
+els.cancelDeviceBtn.addEventListener("click", () => {
+  els.addDeviceForm.classList.add("hidden");
+  els.newDeviceNickname.value = "";
+  els.newDeviceId.value = "";
+  els.newDeviceSecret.value = "";
+});
+
+els.saveDeviceBtn.addEventListener("click", () => {
+  const nickname = els.newDeviceNickname.value.trim() || `PC ${devices.length + 1}`;
+  const deviceId = els.newDeviceId.value.trim();
+  const secret = els.newDeviceSecret.value.trim();
+
+  if (!deviceId || !secret) {
+    showToast("Preencha Device ID e Secret", "error");
+    return;
+  }
+  if (devices.some((d) => d.deviceId === deviceId)) {
+    showToast("Esse PC já foi adicionado", "error");
+    return;
+  }
+
+  const device = { id: crypto.randomUUID(), nickname, deviceId, secret };
+  devices.push(device);
+  saveDevices();
+
+  els.newDeviceNickname.value = "";
+  els.newDeviceId.value = "";
+  els.newDeviceSecret.value = "";
+  els.addDeviceForm.classList.add("hidden");
+
+  renderDevices();
+  if (!socket || !socket.connected) connect();
+  else joinDevice(device);
+  showToast("PC adicionado!");
+});
+
+function removeDevice(localId) {
+  const device = devices.find((d) => d.id === localId);
+  devices = devices.filter((d) => d.id !== localId);
+  saveDevices();
+
+  if (device && socket) {
+    socket.emit("web:leave", { deviceId: device.deviceId });
+    deviceStatus.delete(device.deviceId);
+  }
+
+  // Drop this device from any buttons that targeted it.
+  buttons = buttons.map((b) => {
+    if (!b.targets) return b;
+    const targets = b.targets.filter((t) => t !== localId);
+    const nb = { ...b, targets };
+    if (nb.coordsByTarget && nb.coordsByTarget[localId]) {
+      const cbt = { ...nb.coordsByTarget };
+      delete cbt[localId];
+      nb.coordsByTarget = cbt;
+    }
+    return nb;
+  });
+  saveButtons();
+
+  renderDevices();
+  renderButtons();
+}
 
 // --- Dashboard: rendering buttons ----------------------------------------
 
@@ -177,7 +335,9 @@ function renderButtons() {
   buttons.forEach((btn) => {
     const el = document.createElement("div");
     el.className = "action-button";
-    el.textContent = `${buttonIcon(btn)} ${btn.label}`;
+    const targetCount = (btn.targets || []).length;
+    const suffix = targetCount > 1 ? ` (${targetCount} PCs)` : "";
+    el.textContent = `${buttonIcon(btn)} ${btn.label}${suffix}`;
 
     if (editMode) {
       const removeBtn = document.createElement("button");
@@ -198,7 +358,7 @@ function renderButtons() {
     els.buttonsGrid.appendChild(el);
   });
 
-  if (editMode && buttons.length < MAX_BUTTONS) {
+  if (editMode && buttons.length < MAX_BUTTONS && devices.length > 0) {
     const addEl = document.createElement("div");
     addEl.className = "action-button empty";
     addEl.textContent = "+ Adicionar botão";
@@ -214,7 +374,119 @@ els.editToggleBtn.addEventListener("click", () => {
   renderButtons();
 });
 
-// --- Edit panel -------------------------------------------------------
+// --- Edit panel: targets --------------------------------------------------
+
+function renderTargetChecklist(selectedIds) {
+  els.targetChecklist.innerHTML = "";
+  devices.forEach((d) => {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = d.id;
+    checkbox.checked = selectedIds.includes(d.id);
+    checkbox.addEventListener("change", onTargetsChanged);
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(" " + d.nickname));
+    els.targetChecklist.appendChild(label);
+  });
+}
+
+function getSelectedTargets() {
+  return Array.from(els.targetChecklist.querySelectorAll("input[type=checkbox]:checked")).map((cb) => cb.value);
+}
+
+function onTargetsChanged() {
+  if (els.btnType.value === "click" && els.btnClickMode.value === "coords") {
+    renderCoordsTargetsTable(getSelectedTargets());
+  }
+}
+
+// --- Edit panel: coordinates per target -----------------------------------
+
+function renderCoordsTargetsTable(selectedIds) {
+  els.coordsTargetsTable.innerHTML = "";
+
+  if (selectedIds.length === 0) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = 'Selecione ao menos um PC em "Enviar para".';
+    els.coordsTargetsTable.appendChild(hint);
+    return;
+  }
+
+  selectedIds.forEach((targetId) => {
+    const device = devices.find((d) => d.id === targetId);
+    if (!device) return;
+
+    const coords = coordsByTargetDraft[targetId] || {};
+    const row = document.createElement("div");
+    row.className = "coords-target-row";
+    row.innerHTML =
+      `<label>${escapeHtml(device.nickname)}</label>` +
+      `<input type="number" placeholder="X" data-coord="x" data-target="${targetId}" value="${coords.x ?? ""}" />` +
+      `<input type="number" placeholder="Y" data-coord="y" data-target="${targetId}" value="${coords.y ?? ""}" />`;
+
+    const calibrateBtn = document.createElement("button");
+    calibrateBtn.type = "button";
+    calibrateBtn.className = "secondary";
+    calibrateBtn.textContent = "📍 Calibrar (4s)";
+    calibrateBtn.addEventListener("click", () => calibrateTarget(device, targetId));
+    row.appendChild(calibrateBtn);
+
+    row.querySelectorAll("input[data-coord]").forEach((input) => {
+      input.addEventListener("input", () => {
+        const tId = input.dataset.target;
+        const axis = input.dataset.coord;
+        coordsByTargetDraft[tId] = coordsByTargetDraft[tId] || {};
+        coordsByTargetDraft[tId][axis] = Number(input.value);
+      });
+    });
+
+    els.coordsTargetsTable.appendChild(row);
+  });
+
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.id = "coordsCalibrateHint";
+  els.coordsTargetsTable.appendChild(hint);
+}
+
+function calibrateTarget(device, targetId) {
+  if (!socket) {
+    showToast("Não conectado", "error");
+    return;
+  }
+  const hint = document.getElementById("coordsCalibrateHint");
+  let countdown = 4;
+  const updateHint = () => {
+    if (!hint) return;
+    hint.textContent =
+      countdown > 0
+        ? `Posicione o mouse no PC "${device.nickname}"... ${countdown}`
+        : "Capturando posição...";
+  };
+  updateHint();
+  const interval = setInterval(() => {
+    countdown -= 1;
+    updateHint();
+    if (countdown <= 0) clearInterval(interval);
+  }, 1000);
+
+  const cmdId = crypto.randomUUID();
+  pendingCommands.set(cmdId, { sentPerf: performance.now(), calibrateTargetId: targetId });
+  socket.emit(
+    "command",
+    { deviceId: device.deviceId, secret: device.secret, action: { type: "calibrate", delayMs: 4000 }, sentAt: Date.now(), cmdId },
+    (res) => {
+      if (!res || !res.ok) {
+        pendingCommands.delete(cmdId);
+        if (hint) hint.textContent = `Erro: ${(res && res.error) || "falha ao enviar"}`;
+      }
+    }
+  );
+}
+
+// --- Edit panel: open/close/save ------------------------------------------
 
 els.btnType.addEventListener("change", () => {
   const isClick = els.btnType.value === "click";
@@ -226,6 +498,7 @@ els.btnClickMode.addEventListener("change", () => {
   const isKeys = els.btnClickMode.value === "keys";
   els.coordsFields.classList.toggle("hidden", isKeys);
   els.keysFields.classList.toggle("hidden", !isKeys);
+  if (!isKeys) renderCoordsTargetsTable(getSelectedTargets());
 });
 
 function openEditPanel(btn) {
@@ -233,8 +506,14 @@ function openEditPanel(btn) {
   els.btnLabel.value = btn ? btn.label : "";
   els.btnType.value = btn ? btn.type : "click";
   els.btnClickMode.value = btn && btn.mode === "keys" ? "keys" : "coords";
-  els.btnX.value = btn && btn.x != null ? btn.x : "";
-  els.btnY.value = btn && btn.y != null ? btn.y : "";
+
+  const selectedTargets =
+    btn && btn.targets ? btn.targets.filter((t) => devices.some((d) => d.id === t)) : devices.map((d) => d.id);
+  coordsByTargetDraft = btn && btn.coordsByTarget ? JSON.parse(JSON.stringify(btn.coordsByTarget)) : {};
+
+  renderTargetChecklist(selectedTargets);
+  renderCoordsTargetsTable(selectedTargets);
+
   const mods = (btn && btn.modifiers) || [];
   els.modCtrl.checked = mods.includes("ctrl");
   els.modAlt.checked = mods.includes("alt");
@@ -242,8 +521,9 @@ function openEditPanel(btn) {
   els.modWin.checked = mods.includes("win");
   els.btnKey.value = btn && btn.key ? btn.key : "";
   els.btnSound.value = btn && btn.systemSound ? btn.systemSound : "";
-  els.calibrateHint.textContent = "";
-  els.captureKeyHint.textContent = 'Dica: clique em "Capturar tecla" e pressione a combinação desejada no seu teclado, ou digite manualmente o nome da tecla (ex: F5, Enter, Tab, Delete, A, Numpad1).';
+  els.captureKeyHint.textContent =
+    'Dica: clique em "Capturar tecla" e pressione a combinação desejada no seu teclado, ou digite manualmente o nome da tecla (ex: F5, Enter, Tab, Delete, A, Numpad1).';
+
   els.btnType.dispatchEvent(new Event("change"));
   els.btnClickMode.dispatchEvent(new Event("change"));
   els.editPanel.classList.remove("hidden");
@@ -330,12 +610,19 @@ els.captureKeyBtn.addEventListener("click", () => {
   window.addEventListener("keydown", onKeyDown, true);
 });
 
+// --- Save button ----------------------------------------------------------
+
 els.saveButtonBtn.addEventListener("click", () => {
   const label = els.btnLabel.value.trim();
   const type = els.btnType.value;
+  const targets = getSelectedTargets();
 
   if (!label) {
     showToast("Dê um nome ao botão", "error");
+    return;
+  }
+  if (targets.length === 0) {
+    showToast('Selecione ao menos um PC em "Enviar para"', "error");
     return;
   }
 
@@ -351,21 +638,30 @@ els.saveButtonBtn.addEventListener("click", () => {
     if (els.modAlt.checked) modifiers.push("alt");
     if (els.modShift.checked) modifiers.push("shift");
     if (els.modWin.checked) modifiers.push("win");
-    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "keys", modifiers, key };
+    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "keys", modifiers, key, targets };
   } else if (type === "click") {
-    const x = Number(els.btnX.value);
-    const y = Number(els.btnY.value);
-    if (Number.isNaN(x) || Number.isNaN(y)) {
-      showToast("Preencha X e Y (ou use Calibrar)", "error");
+    const coordsByTarget = {};
+    let missing = false;
+    targets.forEach((tId) => {
+      const xInput = els.coordsTargetsTable.querySelector(`input[data-coord="x"][data-target="${tId}"]`);
+      const yInput = els.coordsTargetsTable.querySelector(`input[data-coord="y"][data-target="${tId}"]`);
+      const x = xInput ? Number(xInput.value) : NaN;
+      const y = yInput ? Number(yInput.value) : NaN;
+      if (Number.isNaN(x) || Number.isNaN(y)) missing = true;
+      coordsByTarget[tId] = { x, y };
+    });
+    if (missing) {
+      showToast("Preencha X e Y para todos os PCs selecionados (ou use Calibrar)", "error");
       return;
     }
-    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "coords", x, y };
+    newBtn = { id: editingButtonId || crypto.randomUUID(), label, type, mode: "coords", coordsByTarget, targets };
   } else {
     newBtn = {
       id: editingButtonId || crypto.randomUUID(),
       label,
       type,
       systemSound: els.btnSound.value || null,
+      targets,
     };
   }
 
@@ -387,108 +683,108 @@ els.saveButtonBtn.addEventListener("click", () => {
   showToast("Botão salvo!");
 });
 
-// --- Calibration --------------------------------------------------------
-
-let calibrating = false;
-
-els.calibrateBtn.addEventListener("click", () => {
-  if (!socket || calibrating) return;
-  calibrating = true;
-  let countdown = 4;
-  els.calibrateHint.textContent = `Posicione o mouse no local desejado no PC alvo... ${countdown}`;
-  const interval = setInterval(() => {
-    countdown -= 1;
-    if (countdown > 0) {
-      els.calibrateHint.textContent = `Posicione o mouse no local desejado no PC alvo... ${countdown}`;
-    } else {
-      clearInterval(interval);
-      els.calibrateHint.textContent = "Capturando posição...";
-    }
-  }, 1000);
-
-  sendCommand({ type: "calibrate", delayMs: 4000 });
-});
+// --- Command results / latency -------------------------------------------
 
 function handleCommandResult(result) {
   const { action, ok, error, x, y, cmdId, execMs } = result;
+  const pending = cmdId ? pendingCommands.get(cmdId) : null;
+  const roundTripMs = pending ? Math.round(performance.now() - pending.sentPerf) : null;
+  if (cmdId) pendingCommands.delete(cmdId);
 
-  // Round-trip and execMs are each measured with a single clock (the
-  // browser's and the agent's, respectively), so they're always reliable.
-  // We deliberately do NOT use the agent's networkMs (sentAt vs its own
-  // Date.now()) for display, because it compares two different machines'
-  // clocks - if they're not in sync (common), the result can be way off or
-  // even negative. Instead we estimate the one-way network time from the
-  // round trip, which needs no clock synchronization at all.
-  let roundTripMs = null;
-  if (cmdId && pendingCommands.has(cmdId)) {
-    roundTripMs = Math.round(performance.now() - pendingCommands.get(cmdId).sentPerf);
-    pendingCommands.delete(cmdId);
-  }
-
-  if (action && action.type === "calibrate") {
-    calibrating = false;
+  if (action && action.type === "calibrate" && pending && pending.calibrateTargetId) {
+    const targetId = pending.calibrateTargetId;
+    const hint = document.getElementById("coordsCalibrateHint");
     if (ok) {
-      els.btnX.value = x;
-      els.btnY.value = y;
-      els.calibrateHint.textContent = `Posição capturada: X=${x}, Y=${y}`;
-    } else {
-      els.calibrateHint.textContent = `Erro ao calibrar: ${error}`;
+      coordsByTargetDraft[targetId] = { x, y };
+      const xInput = els.coordsTargetsTable.querySelector(`input[data-coord="x"][data-target="${targetId}"]`);
+      const yInput = els.coordsTargetsTable.querySelector(`input[data-coord="y"][data-target="${targetId}"]`);
+      if (xInput) xInput.value = x;
+      if (yInput) yInput.value = y;
+      if (hint) hint.textContent = `Posição capturada: X=${x}, Y=${y}`;
+    } else if (hint) {
+      hint.textContent = `Erro ao calibrar: ${error}`;
     }
     return;
   }
 
-  if (ok) {
-    showToast("Comando executado ✔");
-    let networkEstimateMs = null;
-    if (roundTripMs != null && execMs != null) {
-      networkEstimateMs = Math.max(0, Math.round((roundTripMs - execMs) / 2));
-    }
-    showLatency({ networkEstimateMs, execMs, roundTripMs });
-  } else {
-    showToast(`Erro: ${error}`, "error");
-  }
+  if (!pending || !pending.batchId) return; // stray/unrelated result, ignore
+
+  recordBatchResult(pending.batchId, { nickname: pending.nickname, ok, error, execMs, roundTripMs });
 }
 
-function showLatency({ networkEstimateMs, execMs, roundTripMs }) {
-  if (networkEstimateMs == null && roundTripMs == null) {
-    els.latencyBar.classList.add("hidden");
-    return;
-  }
-  const parts = [];
-  if (networkEstimateMs != null) parts.push(`rede (estimada): <strong>${networkEstimateMs}ms</strong>`);
-  if (execMs != null) parts.push(`execução no PC: <strong>${execMs}ms</strong>`);
-  if (roundTripMs != null) parts.push(`total (ida e volta): <strong>${roundTripMs}ms</strong>`);
+function recordBatchResult(batchId, entry) {
+  const batch = batches.get(batchId);
+  if (!batch) return;
+  batch.results.push(entry);
+  if (batch.results.length >= batch.total) finalizeBatch(batchId);
+}
+
+function finalizeBatch(batchId) {
+  const batch = batches.get(batchId);
+  batches.delete(batchId);
+  if (!batch) return;
+
+  const total = batch.results.length;
+  const okCount = batch.results.filter((r) => r.ok).length;
+
+  if (okCount === total) showToast(total > 1 ? `Comando executado em ${total} PCs ✔` : "Comando executado ✔");
+  else if (okCount === 0) showToast("Falha em todos os PCs", "error");
+  else showToast(`Executado em ${okCount}/${total} PCs`, "error");
+
+  const multi = total > 1;
+  const parts = batch.results.map((r) => {
+    const label = multi ? `${escapeHtml(r.nickname)}: ` : "";
+    return r.ok ? `${label}✔ ${r.roundTripMs ?? "?"}ms` : `${label}❌ ${escapeHtml(r.error || "erro")}`;
+  });
   els.latencyBar.innerHTML = parts.join(" &nbsp;•&nbsp; ");
   els.latencyBar.classList.remove("hidden");
 }
 
-// --- Sending commands -----------------------------------------------------
+// --- Sending commands (broadcast-aware) ------------------------------------
 
 function sendButtonCommand(btn) {
-  let action;
-  if (btn.type === "click" && btn.mode === "keys") {
-    action = { type: "keypress", modifiers: btn.modifiers || [], key: btn.key };
-  } else if (btn.type === "click") {
-    action = { type: "click", x: btn.x, y: btn.y };
-  } else {
-    action = btn.systemSound
-      ? { type: "sound", systemSound: btn.systemSound }
-      : { type: "sound", frequency: 880, duration: 400 };
+  const targets = (btn.targets || []).map((tId) => devices.find((d) => d.id === tId)).filter(Boolean);
+  if (targets.length === 0) {
+    showToast("Este botão não tem nenhum PC configurado", "error");
+    return;
   }
-  sendCommand(action);
-}
-
-function sendCommand(action) {
   if (!socket) {
     showToast("Não conectado", "error");
     return;
   }
-  const cmdId = crypto.randomUUID();
-  pendingCommands.set(cmdId, { sentPerf: performance.now() });
-  socket.emit("command", { deviceId: pairing.deviceId, secret: pairing.secret, action, sentAt: Date.now(), cmdId }, (res) => {
-    if (!res || !res.ok) {
-      pendingCommands.delete(cmdId);
-      showToast((res && res.error) || "Erro ao enviar comando", "error");
+
+  const batchId = crypto.randomUUID();
+  batches.set(batchId, { total: targets.length, results: [] });
+
+  targets.forEach((device) => {
+    let action;
+    if (btn.type === "click" && btn.mode === "keys") {
+      action = { type: "keypress", modifiers: btn.modifiers || [], key: btn.key };
+    } else if (btn.type === "click") {
+      const coords = (btn.coordsByTarget && btn.coordsByTarget[device.id]) || {};
+      action = { type: "click", x: coords.x, y: coords.y };
+    } else {
+      action = btn.systemSound
+        ? { type: "sound", systemSound: btn.systemSound }
+        : { type: "sound", frequency: 880, duration: 400 };
     }
+
+    const cmdId = crypto.randomUUID();
+    pendingCommands.set(cmdId, { sentPerf: performance.now(), batchId, nickname: device.nickname });
+    socket.emit(
+      "command",
+      { deviceId: device.deviceId, secret: device.secret, action, sentAt: Date.now(), cmdId },
+      (res) => {
+        if (!res || !res.ok) {
+          pendingCommands.delete(cmdId);
+          recordBatchResult(batchId, { nickname: device.nickname, ok: false, error: (res && res.error) || "Erro ao enviar" });
+        }
+      }
+    );
   });
 }
+
+// --- Initial render ---------------------------------------------------
+
+renderDevices();
+renderButtons();

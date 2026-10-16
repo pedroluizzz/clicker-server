@@ -18,32 +18,47 @@
   <div id="latencyBar" class="latency-bar hidden"></div>
 
   <main>
-    <section id="pairingSection" class="card">
-      <h2>Parear com o PC alvo</h2>
-      <p class="hint">Pegue o <strong>Device ID</strong> e o <strong>Secret</strong> exibidos no console do agente, rodando no PC que vai receber os comandos.</p>
-      <div class="form-row">
-        <label>Device ID</label>
-        <input id="deviceIdInput" type="text" placeholder="ex: a1b2c3" autocomplete="off" />
+    <section id="devicesSection" class="card">
+      <div class="dashboard-header">
+        <h2>Meus PCs</h2>
+        <button id="addDeviceToggleBtn" class="secondary">+ Adicionar PC</button>
       </div>
-      <div class="form-row">
-        <label>Secret</label>
-        <input id="secretInput" type="text" placeholder="chave secreta" autocomplete="off" />
+
+      <div id="devicesList" class="devices-list"></div>
+
+      <div id="addDeviceForm" class="edit-panel hidden">
+        <h3>Adicionar PC</h3>
+        <div class="form-row">
+          <label>Apelido</label>
+          <input id="newDeviceNickname" type="text" placeholder="ex: PC do Escritório" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label>Device ID</label>
+          <input id="newDeviceId" type="text" placeholder="ex: a1b2c3" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label>Secret</label>
+          <input id="newDeviceSecret" type="text" placeholder="chave secreta" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <button id="saveDeviceBtn">Adicionar</button>
+          <button id="cancelDeviceBtn" class="secondary" type="button">Cancelar</button>
+        </div>
       </div>
-      <div class="form-row">
+
+      <div class="form-row" style="margin-top: 16px">
         <label>Servidor</label>
         <input id="serverUrlInput" type="text" placeholder="https://seu-servidor.onrender.com" />
       </div>
-      <button id="connectBtn">Conectar</button>
     </section>
 
-    <section id="dashboardSection" class="card hidden">
+    <section id="dashboardSection" class="card">
       <div class="dashboard-header">
         <h2>Botões</h2>
-        <div>
-          <button id="editToggleBtn" class="secondary">Editar botões</button>
-          <button id="disconnectBtn" class="secondary">Trocar PC</button>
-        </div>
+        <button id="editToggleBtn" class="secondary">Editar botões</button>
       </div>
+
+      <p class="hint" id="noDevicesHint">Adicione um PC acima para criar botões.</p>
 
       <div id="buttonsGrid" class="buttons-grid"></div>
 
@@ -53,6 +68,12 @@
           <label>Nome do botão</label>
           <input id="btnLabel" type="text" placeholder="ex: Avançar slide" />
         </div>
+
+        <div class="form-row">
+          <label>Enviar para</label>
+          <div id="targetChecklist" class="target-checklist"></div>
+        </div>
+
         <div class="form-row">
           <label>Tipo de ação</label>
           <select id="btnType">
@@ -71,14 +92,7 @@
           </div>
 
           <div id="coordsFields">
-            <div class="form-row coords">
-              <label>X</label>
-              <input id="btnX" type="number" />
-              <label>Y</label>
-              <input id="btnY" type="number" />
-              <button id="calibrateBtn" class="secondary" type="button">📍 Calibrar (4s)</button>
-            </div>
-            <p class="hint" id="calibrateHint"></p>
+            <div id="coordsTargetsTable"></div>
           </div>
 
           <div id="keysFields" class="hidden">

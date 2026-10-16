@@ -71,11 +71,17 @@ io.on("connection", (socket) => {
     }
 
     socket.data.role = "web";
-    socket.data.deviceId = deviceId;
-    socket.data.secret = secret;
     socket.join(agentRoom(deviceId));
 
     ack && ack({ ok: true, online: !!agent });
+  });
+
+  // A web client may control several devices at once (one "web:join" per
+  // device, all on the same socket) - this lets it stop listening for a
+  // specific device's events (e.g. after the user removes it from "Meus
+  // PCs") without disconnecting the whole socket.
+  socket.on("web:leave", ({ deviceId }) => {
+    if (deviceId) socket.leave(agentRoom(deviceId));
   });
 
   socket.on("command", ({ deviceId, secret, action, sentAt, cmdId }, ack) => {
@@ -91,8 +97,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("agent:result", (payload) => {
-    const { deviceId, ...rest } = payload || {};
-    io.to(agentRoom(deviceId)).emit("command:result", rest);
+    const { deviceId } = payload || {};
+    // Forward the full payload (deviceId included) so a web client that's
+    // controlling several devices at once can tell which device a given
+    // result belongs to.
+    io.to(agentRoom(deviceId)).emit("command:result", payload);
   });
 
   socket.on("disconnect", () => {
