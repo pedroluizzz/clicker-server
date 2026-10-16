@@ -30,9 +30,11 @@ const els = {
   saveButtonBtn: document.getElementById("saveButtonBtn"),
   cancelEditBtn: document.getElementById("cancelEditBtn"),
   toast: document.getElementById("toast"),
+  latencyBar: document.getElementById("latencyBar"),
 };
 
 let socket = null;
+const pendingCommands = new Map(); // cmdId -> { sentPerf }
 let editMode = false;
 let editingButtonId = null;
 let pairing = loadPairing();
@@ -289,7 +291,18 @@ els.calibrateBtn.addEventListener("click", () => {
 });
 
 function handleCommandResult(result) {
-  const { action, ok, error, x, y } = result;
+  const { action, ok, error, x, y, cmdId, networkMs, execMs } = result;
+
+  // Round-trip is measured entirely with the browser's own clock (click ->
+  // server -> agent -> server -> browser), so it doesn't depend on the two
+  // machines' clocks being in sync - unlike networkMs/execMs, which come
+  // from the agent and rely on Date.now() being reasonably synced.
+  let roundTripMs = null;
+  if (cmdId && pendingCommands.has(cmdId)) {
+    roundTripMs = Math.round(performance.now() - pendingCommands.get(cmdId).sentPerf);
+    pendingCommands.delete(cmdId);
+  }
+
   if (action && action.type === "calibrate") {
     calibrating = false;
     if (ok) {
@@ -304,9 +317,23 @@ function handleCommandResult(result) {
 
   if (ok) {
     showToast("Comando executado ✔");
+    showLatency({ networkMs, execMs, roundTripMs });
   } else {
     showToast(`Erro: ${error}`, "error");
   }
+}
+
+function showLatency({ networkMs, execMs, roundTripMs }) {
+  if (networkMs == null && roundTripMs == null) {
+    els.latencyBar.classList.add("hidden");
+    return;
+  }
+  const parts = [];
+  if (networkMs != null) parts.push(`rede (clique → PC): <strong>${networkMs}ms</strong>`);
+  if (execMs != null) parts.push(`execução no PC: <strong>${execMs}ms</strong>`);
+  if (roundTripMs != null) parts.push(`total (ida e volta): <strong>${roundTripMs}ms</strong>`);
+  els.latencyBar.innerHTML = parts.join(" &nbsp;•&nbsp; ");
+  els.latencyBar.classList.remove("hidden");
 }
 
 // --- Sending commands -----------------------------------------------------
@@ -328,8 +355,11 @@ function sendCommand(action) {
     showToast("Não conectado", "error");
     return;
   }
-  socket.emit("command", { deviceId: pairing.deviceId, secret: pairing.secret, action }, (res) => {
+  const cmdId = crypto.randomUUID();
+  pendingCommands.set(cmdId, { sentPerf: performance.now() });
+  socket.emit("command", { deviceId: pairing.deviceId, secret: pairing.secret, action, sentAt: Date.now(), cmdId }, (res) => {
     if (!res || !res.ok) {
+      pendingCommands.delete(cmdId);
       showToast((res && res.error) || "Erro ao enviar comando", "error");
     }
   });

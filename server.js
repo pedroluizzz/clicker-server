@@ -78,13 +78,15 @@ io.on("connection", (socket) => {
     ack && ack({ ok: true, online: !!agent });
   });
 
-  socket.on("command", ({ deviceId, secret, action }, ack) => {
+  socket.on("command", ({ deviceId, secret, action, sentAt, cmdId }, ack) => {
     const agent = agents.get(deviceId);
     if (!agent || agent.secret !== secret) {
       return ack && ack({ ok: false, error: "Agente offline ou credenciais inválidas" });
     }
 
-    io.to(agent.socketId).emit("command", { action });
+    // sentAt/cmdId are just passed through untouched - they let the browser
+    // and the agent measure latency (see README "Medindo a latência").
+    io.to(agent.socketId).emit("command", { action, sentAt, cmdId });
     ack && ack({ ok: true });
   });
 

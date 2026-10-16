@@ -148,3 +148,13 @@ button.secondary:hover { background: #343a68; color: var(--text); }
 }
 .toast.success { border-left: 4px solid var(--green); }
 .toast.error { border-left: 4px solid var(--red); }
+
+.latency-bar {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 8px 16px 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+.latency-bar strong { color: var(--accent-light); }
