@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Alerta Remoto</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🛠️ Admin — Alerta Remoto</h1>
+    <div class="status">
+      <span id="statusDot" class="dot offline"></span>
+      <span id="statusText">—</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="loginSection" class="card">
+      <h2>Entrar como admin</h2>
+      <div class="form-row">
+        <label>Senha</label>
+        <input id="passwordInput" type="password" placeholder="Senha de admin" autocomplete="off" />
+      </div>
+      <button id="loginBtn">Entrar</button>
+      <p class="hint" id="loginHint"></p>
+    </section>
+
+    <section id="adminSection" class="card hidden">
+      <div class="dashboard-header">
+        <h2>PCs cadastrados</h2>
+        <button id="addDeviceToggleBtn" class="secondary">+ Adicionar PC</button>
+      </div>
+
+      <div id="devicesList" class="devices-list"></div>
+
+      <div id="addDeviceForm" class="edit-panel hidden">
+        <h3>Adicionar PC</h3>
+        <div class="form-row">
+          <label>Apelido</label>
+          <input id="newDeviceNickname" type="text" placeholder="ex: PC do Escritório" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label>Device ID</label>
+          <input id="newDeviceId" type="text" placeholder="ex: a1b2c3" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label>Secret</label>
+          <input id="newDeviceSecret" type="text" placeholder="chave secreta (mostrada no console do agente)" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <button id="saveDeviceBtn">Adicionar</button>
+          <button id="cancelDeviceBtn" class="secondary" type="button">Cancelar</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="buttonsAdminSection" class="card hidden">
+      <div class="dashboard-header">
+        <h2>Botões de alerta</h2>
+        <button id="addButtonToggleBtn" class="secondary">+ Adicionar botão</button>
+      </div>
+
+      <div id="buttonsList" class="devices-list"></div>
+
+      <div id="addButtonForm" class="edit-panel hidden">
+        <h3>Adicionar botão</h3>
+        <div class="form-row">
+          <label>Nome do botão</label>
+          <input id="newButtonLabel" type="text" placeholder="ex: Alerta de urgência" />
+        </div>
+        <div class="form-row">
+          <label>Som</label>
+          <select id="newButtonSound">
+            <option value="">Tom sonoro (bip)</option>
+            <option value="Asterisk">Som do sistema: Asterisk</option>
+            <option value="Exclamation">Som do sistema: Exclamation</option>
+            <option value="Hand">Som do sistema: Hand</option>
+            <option value="Question">Som do sistema: Question</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <button id="saveButtonBtn">Adicionar</button>
+          <button id="cancelButtonBtn" class="secondary" type="button">Cancelar</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

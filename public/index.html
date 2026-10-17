@@ -3,89 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Controle Remoto</title>
+  <title>Alerta Remoto</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header>
-    <h1>🎛️ Controle Remoto</h1>
+    <h1>🔔 Alerta Remoto</h1>
     <div class="status">
       <span id="statusDot" class="dot offline"></span>
-      <span id="statusText">Desconectado</span>
+      <span id="statusText">Conectando...</span>
     </div>
   </header>
 
   <div id="latencyBar" class="latency-bar hidden"></div>
 
   <main>
-    <section id="devicesSection" class="card">
-      <div class="dashboard-header">
-        <h2>Meus PCs</h2>
-        <button id="addDeviceToggleBtn" class="secondary">+ Adicionar PC</button>
-      </div>
-
-      <div id="devicesList" class="devices-list"></div>
-
-      <div id="addDeviceForm" class="edit-panel hidden">
-        <h3>Adicionar PC</h3>
-        <div class="form-row">
-          <label>Apelido</label>
-          <input id="newDeviceNickname" type="text" placeholder="ex: PC do Escritório" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label>Device ID</label>
-          <input id="newDeviceId" type="text" placeholder="ex: a1b2c3" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label>Secret</label>
-          <input id="newDeviceSecret" type="text" placeholder="chave secreta" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <button id="saveDeviceBtn">Adicionar</button>
-          <button id="cancelDeviceBtn" class="secondary" type="button">Cancelar</button>
-        </div>
-      </div>
-
-      <div class="form-row" style="margin-top: 16px">
-        <label>Servidor</label>
-        <input id="serverUrlInput" type="text" placeholder="https://seu-servidor.onrender.com" />
-      </div>
-    </section>
-
     <section id="dashboardSection" class="card">
-      <div class="dashboard-header">
-        <h2>Botões</h2>
-        <button id="editToggleBtn" class="secondary">Editar botões</button>
-      </div>
-
-      <p class="hint" id="noDevicesHint">Adicione um PC acima para criar botões.</p>
-      <p class="hint" id="multiDeviceHint">Cada botão envia o comando para todos os PCs adicionados.</p>
-
+      <p class="hint" id="noButtonsHint">Nenhum botão cadastrado ainda. Peça ao administrador para adicionar um.</p>
       <div id="buttonsGrid" class="buttons-grid"></div>
-
-      <div id="editPanel" class="edit-panel hidden">
-        <h3>Adicionar / editar botão</h3>
-        <div class="form-row">
-          <label>Nome do botão</label>
-          <input id="btnLabel" type="text" placeholder="ex: Alerta de urgência" />
-        </div>
-
-        <div class="form-row">
-          <label>Som</label>
-          <select id="btnSound">
-            <option value="">Tom sonoro (bip)</option>
-            <option value="Asterisk">Som do sistema: Asterisk</option>
-            <option value="Exclamation">Som do sistema: Exclamation</option>
-            <option value="Hand">Som do sistema: Hand</option>
-            <option value="Question">Som do sistema: Question</option>
-          </select>
-        </div>
-
-        <div class="form-row">
-          <button id="saveButtonBtn">Salvar botão</button>
-          <button id="cancelEditBtn" class="secondary" type="button">Cancelar</button>
-        </div>
-      </div>
     </section>
 
     <div id="toast" class="toast hidden"></div>
