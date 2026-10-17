@@ -206,3 +206,16 @@ button.secondary:hover { background: #343a68; color: var(--text); }
   padding: 2px 8px;
   border-radius: 6px;
 }
+
+.pairing-code {
+  font-size: 2.4rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-align: center;
+  color: var(--accent-light);
+  background: #11142a;
+  border: 1px solid #2e3356;
+  border-radius: 12px;
+  padding: 18px;
+  margin: 10px 0;
+}

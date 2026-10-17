@@ -106,6 +106,12 @@ const agents = new Map();
 const adminTokens = new Set();
 const operatorTokens = new Set();
 
+// code -> { nickname, expiresAt } - short-lived codes an admin generates so
+// a new agent can self-register (see "agent:pair") instead of the admin
+// having to copy/paste that agent's deviceId/secret by hand.
+const pairingCodes = new Map();
+const PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
+
 // cmdId -> { resolve } - commands the server itself is waiting on an agent
 // to finish, triggered on behalf of an operator click.
 const pendingCommands = new Map();
@@ -150,6 +156,16 @@ function requireOperator(socket, token, ack) {
   }
   socket.data.operatorAuthed = true;
   return true;
+}
+
+// Generates a short, easy-to-type numeric code that isn't currently in use
+// by another still-valid pairing code.
+function generatePairingCode() {
+  let code;
+  do {
+    code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+  } while (pairingCodes.has(code));
+  return code;
 }
 
 // Sends the sound command to one device's connected agent and resolves with
@@ -203,6 +219,34 @@ io.on("connection", (socket) => {
     console.log(`[agent] registrado: ${deviceId}`);
     broadcastState();
     ack && ack({ ok: true });
+  });
+
+  // Lets a newly-installed agent register itself into the admin's device
+  // list using a short pairing code generated on the admin page, instead of
+  // the admin having to type the agent's deviceId/secret by hand.
+  socket.on("agent:pair", ({ code, deviceId, secret, hostname }, ack) => {
+    if (!code || !deviceId || !secret) {
+      return ack && ack({ ok: false, error: "Dados de pareamento incompletos" });
+    }
+
+    const pending = pairingCodes.get(code);
+    if (!pending || pending.expiresAt < Date.now()) {
+      pairingCodes.delete(code);
+      return ack && ack({ ok: false, error: "Código inválido ou expirado" });
+    }
+
+    if (store.devices.some((d) => d.deviceId === deviceId)) {
+      pairingCodes.delete(code);
+      return ack && ack({ ok: false, error: "Esse PC já está cadastrado" });
+    }
+
+    pairingCodes.delete(code);
+    const nickname = pending.nickname || hostname || `PC ${store.devices.length + 1}`;
+    store.devices.push({ id: crypto.randomUUID(), nickname, deviceId, secret });
+    saveStore();
+    broadcastState();
+    console.log(`[pareamento] PC "${nickname}" (${deviceId}) pareado via código`);
+    ack && ack({ ok: true, nickname });
   });
 
   socket.on("agent:result", (payload) => {
@@ -269,6 +313,17 @@ io.on("connection", (socket) => {
     ack && ack({ ok: true, ...publicState() });
   });
 
+  // Generates a short-lived code the admin shares with whoever is setting
+  // up a new PC - the agent uses it (via "agent:pair") to add itself to the
+  // device list without the admin typing its deviceId/secret manually.
+  socket.on("admin:generatePairingCode", ({ token, nickname }, ack) => {
+    if (!requireAdmin(socket, token, ack)) return;
+    const code = generatePairingCode();
+    const expiresAt = Date.now() + PAIRING_CODE_TTL_MS;
+    pairingCodes.set(code, { nickname: (nickname || "").trim() || null, expiresAt });
+    ack && ack({ ok: true, code, expiresInSec: PAIRING_CODE_TTL_MS / 1000 });
+  });
+
   socket.on("admin:addDevice", ({ token, nickname, deviceId, secret }, ack) => {
     if (!requireAdmin(socket, token, ack)) return;
     if (!deviceId || !secret) return ack && ack({ ok: false, error: "deviceId e secret são obrigatórios" });
@@ -324,6 +379,15 @@ io.on("connection", (socket) => {
     }
   });
 });
+
+// Sweep expired pairing codes periodically so the map doesn't grow forever
+// if an admin generates codes that never get used.
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, data] of pairingCodes) {
+    if (data.expiresAt < now) pairingCodes.delete(code);
+  }
+}, 60 * 1000).unref();
 
 server.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);

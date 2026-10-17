@@ -22,6 +22,16 @@ const els = {
   newDeviceSecret: document.getElementById("newDeviceSecret"),
   saveDeviceBtn: document.getElementById("saveDeviceBtn"),
   cancelDeviceBtn: document.getElementById("cancelDeviceBtn"),
+  pairDeviceToggleBtn: document.getElementById("pairDeviceToggleBtn"),
+  pairDeviceForm: document.getElementById("pairDeviceForm"),
+  pairCodeStep: document.getElementById("pairCodeStep"),
+  pairNickname: document.getElementById("pairNickname"),
+  generatePairCodeBtn: document.getElementById("generatePairCodeBtn"),
+  cancelPairBtn: document.getElementById("cancelPairBtn"),
+  pairCodeDisplay: document.getElementById("pairCodeDisplay"),
+  pairingCodeValue: document.getElementById("pairingCodeValue"),
+  pairingCodeHint: document.getElementById("pairingCodeHint"),
+  closePairBtn: document.getElementById("closePairBtn"),
   buttonsList: document.getElementById("buttonsList"),
   addButtonToggleBtn: document.getElementById("addButtonToggleBtn"),
   addButtonForm: document.getElementById("addButtonForm"),
@@ -137,7 +147,7 @@ function renderDevices() {
   if (devices.length === 0) {
     const empty = document.createElement("p");
     empty.className = "hint";
-    empty.textContent = 'Nenhum PC cadastrado ainda. Clique em "+ Adicionar PC".';
+    empty.textContent = 'Nenhum PC cadastrado ainda. Clique em "🔗 Parear novo PC".';
     els.devicesList.appendChild(empty);
   }
 
@@ -163,6 +173,7 @@ function renderDevices() {
 }
 
 els.addDeviceToggleBtn.addEventListener("click", () => {
+  els.pairDeviceForm.classList.add("hidden");
   els.addDeviceForm.classList.toggle("hidden");
 });
 
@@ -193,6 +204,76 @@ els.saveDeviceBtn.addEventListener("click", () => {
     els.newDeviceSecret.value = "";
     els.addDeviceForm.classList.add("hidden");
     showToast("PC adicionado!");
+  });
+});
+
+// --- Pairing (recommended way to add a PC) --------------------------------
+
+let pairCountdownInterval = null;
+let pairedDeviceCountBefore = 0;
+
+function resetPairForm() {
+  clearInterval(pairCountdownInterval);
+  els.pairNickname.value = "";
+  els.pairCodeStep.classList.remove("hidden");
+  els.pairCodeDisplay.classList.add("hidden");
+}
+
+els.pairDeviceToggleBtn.addEventListener("click", () => {
+  els.addDeviceForm.classList.add("hidden");
+  els.pairDeviceForm.classList.toggle("hidden");
+  if (!els.pairDeviceForm.classList.contains("hidden")) resetPairForm();
+});
+
+els.cancelPairBtn.addEventListener("click", () => {
+  els.pairDeviceForm.classList.add("hidden");
+  resetPairForm();
+});
+
+els.closePairBtn.addEventListener("click", () => {
+  els.pairDeviceForm.classList.add("hidden");
+  resetPairForm();
+});
+
+els.generatePairCodeBtn.addEventListener("click", () => {
+  const nickname = els.pairNickname.value.trim();
+  pairedDeviceCountBefore = devices.length;
+
+  socket.emit("admin:generatePairingCode", { token, nickname }, (res) => {
+    if (!res || !res.ok) {
+      showToast((res && res.error) || "Erro ao gerar código", "error");
+      return;
+    }
+
+    els.pairCodeStep.classList.add("hidden");
+    els.pairCodeDisplay.classList.remove("hidden");
+    els.pairingCodeValue.textContent = res.code.replace(/(\d{3})(\d{3})/, "$1 $2");
+
+    let remaining = res.expiresInSec;
+    const updateHint = () => {
+      const m = Math.floor(remaining / 60);
+      const s = remaining % 60;
+      els.pairingCodeHint.textContent =
+        remaining > 0
+          ? `No PC novo, abra o agente e digite esse código quando pedido. Expira em ${m}:${String(s).padStart(2, "0")}.`
+          : "Código expirado. Gere um novo.";
+    };
+    updateHint();
+    clearInterval(pairCountdownInterval);
+    pairCountdownInterval = setInterval(() => {
+      remaining -= 1;
+      updateHint();
+      // If a new device just showed up while this code was active, it's a
+      // reasonable bet that this is the PC that just paired - close the
+      // dialog automatically so the admin sees it land in the list.
+      if (devices.length > pairedDeviceCountBefore) {
+        clearInterval(pairCountdownInterval);
+        els.pairDeviceForm.classList.add("hidden");
+        resetPairForm();
+        showToast("PC pareado com sucesso!");
+      }
+      if (remaining <= 0) clearInterval(pairCountdownInterval);
+    }, 1000);
   });
 });
 

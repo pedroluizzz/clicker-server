@@ -29,13 +29,36 @@
     <section id="adminSection" class="card hidden">
       <div class="dashboard-header">
         <h2>PCs cadastrados</h2>
-        <button id="addDeviceToggleBtn" class="secondary">+ Adicionar PC</button>
+        <div>
+          <button id="pairDeviceToggleBtn" class="secondary">🔗 Parear novo PC</button>
+          <button id="addDeviceToggleBtn" class="secondary">+ Adicionar manualmente</button>
+        </div>
       </div>
 
       <div id="devicesList" class="devices-list"></div>
 
+      <div id="pairDeviceForm" class="edit-panel hidden">
+        <h3>Parear novo PC</h3>
+        <p class="hint">Gere um código, instale/abra o agente no PC novo e digite esse código quando ele pedir. O PC se cadastra sozinho, sem precisar copiar Device ID/Secret.</p>
+        <div id="pairCodeStep">
+          <div class="form-row">
+            <label>Apelido (opcional)</label>
+            <input id="pairNickname" type="text" placeholder="ex: PC do Escritório" autocomplete="off" />
+          </div>
+          <div class="form-row">
+            <button id="generatePairCodeBtn">Gerar código</button>
+            <button id="cancelPairBtn" class="secondary" type="button">Cancelar</button>
+          </div>
+        </div>
+        <div id="pairCodeDisplay" class="hidden">
+          <div class="pairing-code" id="pairingCodeValue">------</div>
+          <p class="hint" id="pairingCodeHint"></p>
+          <button id="closePairBtn" class="secondary" type="button">Fechar</button>
+        </div>
+      </div>
+
       <div id="addDeviceForm" class="edit-panel hidden">
-        <h3>Adicionar PC</h3>
+        <h3>Adicionar PC manualmente</h3>
         <div class="form-row">
           <label>Apelido</label>
           <input id="newDeviceNickname" type="text" placeholder="ex: PC do Escritório" autocomplete="off" />
