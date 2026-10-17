@@ -5,10 +5,11 @@
 //   ("devices") are registered and which alert buttons exist. Devices and
 //   buttons are stored server-side (server/data/store.json), NOT in the
 //   operator's browser - operators never see a device's secret.
-// - OPERATOR (public/index.html, no login): just sees the list of alert
-//   buttons and can click them. Clicking asks the SERVER to relay the
-//   command to every registered device's agent - the operator's browser
-//   never talks to an agent directly and never handles deviceId/secret.
+// - OPERATOR (public/index.html, password-protected with a SEPARATE,
+//   lower-stakes password): just sees the list of alert buttons and can
+//   click them. Clicking asks the SERVER to relay the command to every
+//   registered device's agent - the operator's browser never talks to an
+//   agent directly and never handles deviceId/secret.
 //
 // The agent (agent/agent.js) still connects here and "registers" itself
 // under a deviceId + secret pairing code, same as before - whether that
@@ -47,7 +48,7 @@ function loadStore() {
   try {
     return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
   } catch {
-    return { devices: [], buttons: [], adminPassword: null };
+    return { devices: [], buttons: [], adminPassword: null, operatorPassword: null };
   }
 }
 
@@ -71,6 +72,16 @@ if (!adminPassword) {
   saveStore();
 }
 
+// Same idea for the operator password - a separate, lower-stakes password
+// that just gates "can see and click the alert buttons", independent of the
+// admin password.
+let operatorPassword = process.env.OPERATOR_PASSWORD || store.operatorPassword;
+if (!operatorPassword) {
+  operatorPassword = crypto.randomBytes(6).toString("hex");
+  store.operatorPassword = operatorPassword;
+  saveStore();
+}
+
 console.log("==============================================");
 console.log(" Clicker Server");
 if (!process.env.ADMIN_PASSWORD) {
@@ -79,14 +90,21 @@ if (!process.env.ADMIN_PASSWORD) {
 } else {
   console.log(" Senha de admin: definida via variável de ambiente ADMIN_PASSWORD");
 }
+if (!process.env.OPERATOR_PASSWORD) {
+  console.log(" Senha de operador (gerada automaticamente): " + operatorPassword);
+  console.log(" Dica: defina a variável de ambiente OPERATOR_PASSWORD para escolher a sua própria.");
+} else {
+  console.log(" Senha de operador: definida via variável de ambiente OPERATOR_PASSWORD");
+}
 console.log("==============================================");
 
 // deviceId -> { secret, socketId } - tracks agents currently connected,
 // regardless of whether an admin has added them to the registered list yet.
 const agents = new Map();
 
-// adminToken -> true, issued on successful admin:login, cleared on restart.
+// token -> true, issued on successful login, cleared on restart.
 const adminTokens = new Set();
+const operatorTokens = new Set();
 
 // cmdId -> { resolve } - commands the server itself is waiting on an agent
 // to finish, triggered on behalf of an operator click.
@@ -104,15 +122,33 @@ function publicState() {
   };
 }
 
+// Only push state updates to sockets that have actually logged in (as
+// operator or admin) - an unauthenticated connection shouldn't be able to
+// learn the button labels or device nicknames just by connecting.
 function broadcastState() {
-  io.emit("state:update", publicState());
+  const state = publicState();
+  for (const s of io.sockets.sockets.values()) {
+    if (s.data.operatorAuthed || s.data.adminAuthed) {
+      s.emit("state:update", state);
+    }
+  }
 }
 
-function requireAdmin(token, ack) {
+function requireAdmin(socket, token, ack) {
   if (!token || !adminTokens.has(token)) {
     ack && ack({ ok: false, error: "Sessão de admin inválida ou expirada. Faça login novamente." });
     return false;
   }
+  socket.data.adminAuthed = true;
+  return true;
+}
+
+function requireOperator(socket, token, ack) {
+  if (!token || !(operatorTokens.has(token) || adminTokens.has(token))) {
+    ack && ack({ ok: false, error: "Sessão inválida ou expirada. Faça login novamente." });
+    return false;
+  }
+  socket.data.operatorAuthed = true;
   return true;
 }
 
@@ -177,12 +213,33 @@ io.on("connection", (socket) => {
     }
   });
 
-  // --- Operator side (no auth; anyone with the link) --------------------
-  socket.on("operator:getState", (ack) => {
-    ack && ack(publicState());
+  // --- Operator side (password-protected, separate from admin) ----------
+  socket.on("operator:login", ({ password }, ack) => {
+    if (password !== operatorPassword) {
+      return ack && ack({ ok: false, error: "Senha incorreta" });
+    }
+    const token = crypto.randomBytes(24).toString("hex");
+    operatorTokens.add(token);
+    socket.data.operatorAuthed = true;
+    ack && ack({ ok: true, token });
   });
 
-  socket.on("operator:trigger", async ({ buttonId }, ack) => {
+  // Lets a returning client (one that already stored a token locally) skip
+  // the password prompt, as long as the server hasn't restarted since.
+  socket.on("operator:verifyToken", ({ token }, ack) => {
+    if (!token || !operatorTokens.has(token)) return ack && ack({ ok: false });
+    socket.data.operatorAuthed = true;
+    ack && ack({ ok: true });
+  });
+
+  socket.on("operator:getState", ({ token }, ack) => {
+    if (!requireOperator(socket, token, ack)) return;
+    ack && ack({ ok: true, ...publicState() });
+  });
+
+  socket.on("operator:trigger", async ({ token, buttonId }, ack) => {
+    if (!requireOperator(socket, token, ack)) return;
+
     const button = store.buttons.find((b) => b.id === buttonId);
     if (!button) return ack && ack({ ok: false, error: "Botão não encontrado" });
     if (store.devices.length === 0) return ack && ack({ ok: false, error: "Nenhum PC cadastrado" });
@@ -203,16 +260,17 @@ io.on("connection", (socket) => {
     }
     const token = crypto.randomBytes(24).toString("hex");
     adminTokens.add(token);
+    socket.data.adminAuthed = true;
     ack && ack({ ok: true, token });
   });
 
   socket.on("admin:getState", ({ token }, ack) => {
-    if (!requireAdmin(token, ack)) return;
+    if (!requireAdmin(socket, token, ack)) return;
     ack && ack({ ok: true, ...publicState() });
   });
 
   socket.on("admin:addDevice", ({ token, nickname, deviceId, secret }, ack) => {
-    if (!requireAdmin(token, ack)) return;
+    if (!requireAdmin(socket, token, ack)) return;
     if (!deviceId || !secret) return ack && ack({ ok: false, error: "deviceId e secret são obrigatórios" });
     if (store.devices.some((d) => d.deviceId === deviceId)) {
       return ack && ack({ ok: false, error: "Esse PC já está cadastrado" });
@@ -229,7 +287,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("admin:removeDevice", ({ token, id }, ack) => {
-    if (!requireAdmin(token, ack)) return;
+    if (!requireAdmin(socket, token, ack)) return;
     store.devices = store.devices.filter((d) => d.id !== id);
     saveStore();
     broadcastState();
@@ -237,7 +295,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("admin:addButton", ({ token, label, systemSound }, ack) => {
-    if (!requireAdmin(token, ack)) return;
+    if (!requireAdmin(socket, token, ack)) return;
     if (!label || !label.trim()) return ack && ack({ ok: false, error: "Informe um nome para o botão" });
     if (store.buttons.length >= 5) return ack && ack({ ok: false, error: "Máximo de 5 botões" });
     store.buttons.push({ id: crypto.randomUUID(), label: label.trim(), systemSound: systemSound || null });
@@ -247,7 +305,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("admin:removeButton", ({ token, id }, ack) => {
-    if (!requireAdmin(token, ack)) return;
+    if (!requireAdmin(socket, token, ack)) return;
     store.buttons = store.buttons.filter((b) => b.id !== id);
     saveStore();
     broadcastState();

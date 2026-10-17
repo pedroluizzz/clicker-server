@@ -18,7 +18,17 @@
   <div id="latencyBar" class="latency-bar hidden"></div>
 
   <main>
-    <section id="dashboardSection" class="card">
+    <section id="loginSection" class="card">
+      <h2>Entrar</h2>
+      <div class="form-row">
+        <label>Senha de acesso</label>
+        <input id="passwordInput" type="password" placeholder="Senha" autocomplete="off" />
+      </div>
+      <button id="loginBtn">Entrar</button>
+      <p class="hint" id="loginHint"></p>
+    </section>
+
+    <section id="dashboardSection" class="card hidden">
       <p class="hint" id="noButtonsHint">Nenhum botão cadastrado ainda. Peça ao administrador para adicionar um.</p>
       <div id="buttonsGrid" class="buttons-grid"></div>
     </section>

@@ -1,13 +1,22 @@
 // app.js - operator page logic.
-// No login, no device management: this page only shows the alert buttons
-// that an admin configured on the server, and lets anyone with the link
-// click them to trigger a sound alert on every registered PC.
+// Password-protected (a SEPARATE, lower-stakes password from the admin
+// one). After logging in, this page only shows the alert buttons that an
+// admin configured on the server, and lets the operator click them to
+// trigger a sound alert on every registered PC.
 // Device/button configuration lives entirely on the server (server/data/
-// store.json) - this page never sees a device's deviceId/secret.
+// store.json) - this page never sees a device's deviceId/secret, and the
+// operator password only grants permission to view/click buttons, not to
+// add or remove anything.
+
+const TOKEN_KEY = "clicker.operatorToken";
 
 const els = {
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
+  loginSection: document.getElementById("loginSection"),
+  passwordInput: document.getElementById("passwordInput"),
+  loginBtn: document.getElementById("loginBtn"),
+  loginHint: document.getElementById("loginHint"),
   dashboardSection: document.getElementById("dashboardSection"),
   noButtonsHint: document.getElementById("noButtonsHint"),
   buttonsGrid: document.getElementById("buttonsGrid"),
@@ -15,6 +24,7 @@ const els = {
   latencyBar: document.getElementById("latencyBar"),
 };
 
+let token = localStorage.getItem(TOKEN_KEY) || null;
 let buttons = [];
 let devices = [];
 let sending = false;
@@ -33,6 +43,19 @@ function showToast(message, type = "success") {
 function setStatus(state, text) {
   els.statusDot.className = `dot ${state}`;
   els.statusText.textContent = text;
+}
+
+function showLoggedIn() {
+  els.loginSection.classList.add("hidden");
+  els.dashboardSection.classList.remove("hidden");
+}
+
+function showLoggedOut(message) {
+  token = null;
+  localStorage.removeItem(TOKEN_KEY);
+  els.loginSection.classList.remove("hidden");
+  els.dashboardSection.classList.add("hidden");
+  if (message) els.loginHint.textContent = message;
 }
 
 function updateStatusFromDevices() {
@@ -69,7 +92,7 @@ function triggerButton(btn) {
 
   sending = true;
   const t0 = performance.now();
-  socket.emit("operator:trigger", { buttonId: btn.id }, (res) => {
+  socket.emit("operator:trigger", { token, buttonId: btn.id }, (res) => {
     sending = false;
     const roundTripMs = Math.round(performance.now() - t0);
 
@@ -78,7 +101,11 @@ function triggerButton(btn) {
       return;
     }
     if (res.error && !res.results) {
-      showToast(res.error, "error");
+      if (/sessão/i.test(res.error)) {
+        showLoggedOut(res.error);
+      } else {
+        showToast(res.error, "error");
+      }
       return;
     }
 
@@ -101,12 +128,71 @@ function triggerButton(btn) {
   });
 }
 
+// --- Login ---------------------------------------------------------------
+
+els.loginBtn.addEventListener("click", () => {
+  const password = els.passwordInput.value;
+  if (!password) {
+    els.loginHint.textContent = "Digite a senha";
+    return;
+  }
+  socket.emit("operator:login", { password }, (res) => {
+    if (!res || !res.ok) {
+      els.loginHint.textContent = (res && res.error) || "Falha ao entrar";
+      return;
+    }
+    token = res.token;
+    localStorage.setItem(TOKEN_KEY, token);
+    els.loginHint.textContent = "";
+    els.passwordInput.value = "";
+    showLoggedIn();
+    fetchState();
+  });
+});
+
+els.passwordInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.loginBtn.click();
+});
+
+function fetchState() {
+  socket.emit("operator:getState", { token }, (res) => {
+    if (!res || !res.ok) {
+      showLoggedOut(res && res.error);
+      return;
+    }
+    applyState(res);
+  });
+}
+
+function applyState(state) {
+  if (!state) return;
+  devices = state.devices || [];
+  buttons = state.buttons || [];
+  updateStatusFromDevices();
+  renderButtons();
+}
+
 // --- Connection -------------------------------------------------------
 
 let socket = io();
 
 socket.on("connect", () => {
-  socket.emit("operator:getState", (state) => applyState(state));
+  if (token) {
+    // Try to reuse a previously stored token instead of asking for the
+    // password again - if the server restarted (tokens cleared), this
+    // fails and we fall back to the login form.
+    socket.emit("operator:verifyToken", { token }, (res) => {
+      if (res && res.ok) {
+        showLoggedIn();
+        fetchState();
+      } else {
+        showLoggedOut();
+      }
+    });
+  } else {
+    showLoggedOut();
+    setStatus("offline", "Faça login para continuar");
+  }
 });
 
 socket.on("state:update", (state) => applyState(state));
@@ -118,11 +204,3 @@ socket.on("disconnect", () => {
 socket.on("connect_error", () => {
   setStatus("offline", "Não foi possível conectar ao servidor");
 });
-
-function applyState(state) {
-  if (!state) return;
-  devices = state.devices || [];
-  buttons = state.buttons || [];
-  updateStatusFromDevices();
-  renderButtons();
-}
