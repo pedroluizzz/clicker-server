@@ -67,57 +67,18 @@
         <h3>Adicionar / editar botão</h3>
         <div class="form-row">
           <label>Nome do botão</label>
-          <input id="btnLabel" type="text" placeholder="ex: Avançar slide" />
+          <input id="btnLabel" type="text" placeholder="ex: Alerta de urgência" />
         </div>
 
         <div class="form-row">
-          <label>Tipo de ação</label>
-          <select id="btnType">
-            <option value="click">Clique real na tela</option>
-            <option value="sound">Tocar som</option>
+          <label>Som</label>
+          <select id="btnSound">
+            <option value="">Tom sonoro (bip)</option>
+            <option value="Asterisk">Som do sistema: Asterisk</option>
+            <option value="Exclamation">Som do sistema: Exclamation</option>
+            <option value="Hand">Som do sistema: Hand</option>
+            <option value="Question">Som do sistema: Question</option>
           </select>
-        </div>
-
-        <div id="clickFields">
-          <div class="form-row">
-            <label>Como disparar</label>
-            <select id="btnClickMode">
-              <option value="coords">📍 Clique em uma posição da tela (coordenadas)</option>
-              <option value="keys">⌨️ Combinação de teclas (atalho)</option>
-            </select>
-          </div>
-
-          <div id="coordsFields">
-            <div id="coordsTargetsTable"></div>
-          </div>
-
-          <div id="keysFields" class="hidden">
-            <div class="form-row modifiers">
-              <label><input type="checkbox" id="modCtrl" /> Ctrl</label>
-              <label><input type="checkbox" id="modAlt" /> Alt</label>
-              <label><input type="checkbox" id="modShift" /> Shift</label>
-              <label><input type="checkbox" id="modWin" /> Win</label>
-            </div>
-            <div class="form-row coords">
-              <label>Tecla</label>
-              <input id="btnKey" type="text" placeholder="ex: F5, Enter, S, Numpad1" style="width: 140px" />
-              <button id="captureKeyBtn" class="secondary" type="button">🎹 Capturar tecla</button>
-            </div>
-            <p class="hint" id="captureKeyHint">Dica: clique em "Capturar tecla" e pressione a combinação desejada no seu teclado, ou digite manualmente o nome da tecla (ex: F5, Enter, Tab, Delete, A, Numpad1).</p>
-          </div>
-        </div>
-
-        <div id="soundFields" class="hidden">
-          <div class="form-row">
-            <label>Som</label>
-            <select id="btnSound">
-              <option value="">Tom sonoro (bip)</option>
-              <option value="Asterisk">Som do sistema: Asterisk</option>
-              <option value="Exclamation">Som do sistema: Exclamation</option>
-              <option value="Hand">Som do sistema: Hand</option>
-              <option value="Question">Som do sistema: Question</option>
-            </select>
-          </div>
         </div>
 
         <div class="form-row">
