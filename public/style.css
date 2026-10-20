@@ -197,7 +197,27 @@ button.secondary:hover { background: #343a68; color: var(--text); }
   padding: 10px 14px;
 }
 
+.device-row.inactive { opacity: 0.55; }
+
 .device-nickname { font-weight: 600; flex: 1; }
+
+.license-label-input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.license-label-input:hover,
+.license-label-input:focus {
+  border-color: #2e3356;
+  background: #1f2342;
+}
 
 .device-id-badge {
   font-size: 0.75rem;
@@ -205,17 +225,7 @@ button.secondary:hover { background: #343a68; color: var(--text); }
   background: #1f2342;
   padding: 2px 8px;
   border-radius: 6px;
+  font-family: monospace;
+  white-space: nowrap;
 }
 
-.pairing-code {
-  font-size: 2.4rem;
-  font-weight: 700;
-  letter-spacing: 0.15em;
-  text-align: center;
-  color: var(--accent-light);
-  background: #11142a;
-  border: 1px solid #2e3356;
-  border-radius: 12px;
-  padding: 18px;
-  margin: 10px 0;
-}

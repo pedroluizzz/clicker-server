@@ -1,9 +1,9 @@
 // admin.js - admin page logic.
 // Password-protected (server-side check via "admin:login"). After login,
-// the admin can add/remove registered devices (PCs) and alert buttons -
-// this is the ONLY place that ever handles a device's deviceId/secret
-// pair, besides the agent itself. Operators (index.html/app.js) never see
-// this data; they only get a device's nickname + online status.
+// the admin can create/rename/activate/deactivate/remove license keys and
+// manage alert buttons - this is the ONLY place that ever handles a
+// license key besides the agent itself. Operators (index.html/app.js)
+// never see this data; they only click buttons.
 
 const els = {
   statusDot: document.getElementById("statusDot"),
@@ -14,24 +14,8 @@ const els = {
   loginHint: document.getElementById("loginHint"),
   adminSection: document.getElementById("adminSection"),
   buttonsAdminSection: document.getElementById("buttonsAdminSection"),
-  devicesList: document.getElementById("devicesList"),
-  addDeviceToggleBtn: document.getElementById("addDeviceToggleBtn"),
-  addDeviceForm: document.getElementById("addDeviceForm"),
-  newDeviceNickname: document.getElementById("newDeviceNickname"),
-  newDeviceId: document.getElementById("newDeviceId"),
-  newDeviceSecret: document.getElementById("newDeviceSecret"),
-  saveDeviceBtn: document.getElementById("saveDeviceBtn"),
-  cancelDeviceBtn: document.getElementById("cancelDeviceBtn"),
-  pairDeviceToggleBtn: document.getElementById("pairDeviceToggleBtn"),
-  pairDeviceForm: document.getElementById("pairDeviceForm"),
-  pairCodeStep: document.getElementById("pairCodeStep"),
-  pairNickname: document.getElementById("pairNickname"),
-  generatePairCodeBtn: document.getElementById("generatePairCodeBtn"),
-  cancelPairBtn: document.getElementById("cancelPairBtn"),
-  pairCodeDisplay: document.getElementById("pairCodeDisplay"),
-  pairingCodeValue: document.getElementById("pairingCodeValue"),
-  pairingCodeHint: document.getElementById("pairingCodeHint"),
-  closePairBtn: document.getElementById("closePairBtn"),
+  licensesList: document.getElementById("licensesList"),
+  addLicenseBtn: document.getElementById("addLicenseBtn"),
   buttonsList: document.getElementById("buttonsList"),
   addButtonToggleBtn: document.getElementById("addButtonToggleBtn"),
   addButtonForm: document.getElementById("addButtonForm"),
@@ -44,7 +28,7 @@ const els = {
 
 let socket = io();
 let token = sessionStorage.getItem("clicker.adminToken") || null;
-let devices = [];
+let licenses = [];
 let buttons = [];
 
 function escapeHtml(s) {
@@ -115,13 +99,17 @@ function refreshState() {
 }
 
 function applyState(state) {
-  devices = state.devices || [];
+  licenses = state.licenses || [];
   buttons = state.buttons || [];
-  renderDevices();
+  renderLicenses();
   renderButtonsList();
 
-  const onlineCount = devices.filter((d) => d.online).length;
-  setStatus(devices.length === 0 ? "offline" : onlineCount === devices.length ? "online" : "connecting", `${onlineCount}/${devices.length} PCs online`);
+  const activeLicenses = licenses.filter((l) => l.active);
+  const onlineCount = activeLicenses.filter((l) => l.online).length;
+  setStatus(
+    activeLicenses.length === 0 ? "offline" : onlineCount === activeLicenses.length ? "online" : "connecting",
+    `${onlineCount}/${activeLicenses.length} PCs online`
+  );
 }
 
 socket.on("connect", () => {
@@ -132,7 +120,7 @@ socket.on("connect", () => {
 });
 
 // state:update is broadcast to everyone (operators + admins) whenever
-// devices/buttons change or an agent connects/disconnects - keep the admin
+// licenses/buttons change or an agent connects/disconnects - keep the admin
 // view live without needing to poll.
 socket.on("state:update", (state) => {
   if (token) applyState(state);
@@ -140,140 +128,79 @@ socket.on("state:update", (state) => {
 
 socket.on("disconnect", () => setStatus("offline", "Desconectado do servidor"));
 
-// --- Devices --------------------------------------------------------------
+// --- Licenses --------------------------------------------------------------
 
-function renderDevices() {
-  els.devicesList.innerHTML = "";
-  if (devices.length === 0) {
+function renderLicenses() {
+  els.licensesList.innerHTML = "";
+  if (licenses.length === 0) {
     const empty = document.createElement("p");
     empty.className = "hint";
-    empty.textContent = 'Nenhum PC cadastrado ainda. Clique em "🔗 Parear novo PC".';
-    els.devicesList.appendChild(empty);
+    empty.textContent = 'Nenhuma licença cadastrada. Clique em "+ Gerar nova licença".';
+    els.licensesList.appendChild(empty);
   }
 
-  devices.forEach((d) => {
+  licenses.forEach((l) => {
     const row = document.createElement("div");
-    row.className = "device-row";
-    row.innerHTML =
-      `<span class="dot ${d.online ? "online" : "offline"}"></span>` +
-      `<span class="device-nickname">${escapeHtml(d.nickname)}</span>` +
-      `<span class="device-id-badge">${escapeHtml(d.deviceId)}</span>`;
+    row.className = "device-row" + (l.active ? "" : " inactive");
+
+    const dot = document.createElement("span");
+    dot.className = `dot ${l.active && l.online ? "online" : "offline"}`;
+    row.appendChild(dot);
+
+    const labelInput = document.createElement("input");
+    labelInput.className = "license-label-input";
+    labelInput.type = "text";
+    labelInput.placeholder = "Apelido (ex: PC do Escritório)";
+    labelInput.value = l.label || "";
+    labelInput.addEventListener("change", () => {
+      socket.emit("admin:renameLicense", { token, key: l.key, label: labelInput.value.trim() }, (res) => {
+        if (!res || !res.ok) showToast((res && res.error) || "Erro ao renomear", "error");
+      });
+    });
+    row.appendChild(labelInput);
+
+    const keyBadge = document.createElement("span");
+    keyBadge.className = "device-id-badge";
+    keyBadge.textContent = l.key;
+    keyBadge.title = "Clique para copiar";
+    keyBadge.style.cursor = "pointer";
+    keyBadge.addEventListener("click", () => {
+      navigator.clipboard.writeText(l.key).then(() => showToast("Licença copiada!"));
+    });
+    row.appendChild(keyBadge);
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.className = "secondary";
+    toggleBtn.textContent = l.active ? "Desativar" : "Ativar";
+    toggleBtn.addEventListener("click", () => {
+      socket.emit("admin:setLicenseActive", { token, key: l.key, active: !l.active }, (res) => {
+        if (!res || !res.ok) showToast((res && res.error) || "Erro ao atualizar", "error");
+      });
+    });
+    row.appendChild(toggleBtn);
 
     const removeBtn = document.createElement("button");
     removeBtn.className = "remove";
     removeBtn.textContent = "✕";
     removeBtn.addEventListener("click", () => {
-      socket.emit("admin:removeDevice", { token, id: d.id }, (res) => {
+      if (!confirm(`Remover a licença ${l.key} de vez? Isso não pode ser desfeito.`)) return;
+      socket.emit("admin:removeLicense", { token, key: l.key }, (res) => {
         if (!res || !res.ok) showToast((res && res.error) || "Erro ao remover", "error");
       });
     });
     row.appendChild(removeBtn);
-    els.devicesList.appendChild(row);
+
+    els.licensesList.appendChild(row);
   });
 }
 
-els.addDeviceToggleBtn.addEventListener("click", () => {
-  els.pairDeviceForm.classList.add("hidden");
-  els.addDeviceForm.classList.toggle("hidden");
-});
-
-els.cancelDeviceBtn.addEventListener("click", () => {
-  els.addDeviceForm.classList.add("hidden");
-  els.newDeviceNickname.value = "";
-  els.newDeviceId.value = "";
-  els.newDeviceSecret.value = "";
-});
-
-els.saveDeviceBtn.addEventListener("click", () => {
-  const nickname = els.newDeviceNickname.value.trim();
-  const deviceId = els.newDeviceId.value.trim();
-  const secret = els.newDeviceSecret.value.trim();
-
-  if (!deviceId || !secret) {
-    showToast("Preencha Device ID e Secret", "error");
-    return;
-  }
-
-  socket.emit("admin:addDevice", { token, nickname, deviceId, secret }, (res) => {
+els.addLicenseBtn.addEventListener("click", () => {
+  socket.emit("admin:addLicense", { token, label: "" }, (res) => {
     if (!res || !res.ok) {
-      showToast((res && res.error) || "Erro ao adicionar", "error");
+      showToast((res && res.error) || "Erro ao gerar licença", "error");
       return;
     }
-    els.newDeviceNickname.value = "";
-    els.newDeviceId.value = "";
-    els.newDeviceSecret.value = "";
-    els.addDeviceForm.classList.add("hidden");
-    showToast("PC adicionado!");
-  });
-});
-
-// --- Pairing (recommended way to add a PC) --------------------------------
-
-let pairCountdownInterval = null;
-let pairedDeviceCountBefore = 0;
-
-function resetPairForm() {
-  clearInterval(pairCountdownInterval);
-  els.pairNickname.value = "";
-  els.pairCodeStep.classList.remove("hidden");
-  els.pairCodeDisplay.classList.add("hidden");
-}
-
-els.pairDeviceToggleBtn.addEventListener("click", () => {
-  els.addDeviceForm.classList.add("hidden");
-  els.pairDeviceForm.classList.toggle("hidden");
-  if (!els.pairDeviceForm.classList.contains("hidden")) resetPairForm();
-});
-
-els.cancelPairBtn.addEventListener("click", () => {
-  els.pairDeviceForm.classList.add("hidden");
-  resetPairForm();
-});
-
-els.closePairBtn.addEventListener("click", () => {
-  els.pairDeviceForm.classList.add("hidden");
-  resetPairForm();
-});
-
-els.generatePairCodeBtn.addEventListener("click", () => {
-  const nickname = els.pairNickname.value.trim();
-  pairedDeviceCountBefore = devices.length;
-
-  socket.emit("admin:generatePairingCode", { token, nickname }, (res) => {
-    if (!res || !res.ok) {
-      showToast((res && res.error) || "Erro ao gerar código", "error");
-      return;
-    }
-
-    els.pairCodeStep.classList.add("hidden");
-    els.pairCodeDisplay.classList.remove("hidden");
-    els.pairingCodeValue.textContent = res.code.replace(/(\d{3})(\d{3})/, "$1 $2");
-
-    let remaining = res.expiresInSec;
-    const updateHint = () => {
-      const m = Math.floor(remaining / 60);
-      const s = remaining % 60;
-      els.pairingCodeHint.textContent =
-        remaining > 0
-          ? `No PC novo, abra o agente e digite esse código quando pedido. Expira em ${m}:${String(s).padStart(2, "0")}.`
-          : "Código expirado. Gere um novo.";
-    };
-    updateHint();
-    clearInterval(pairCountdownInterval);
-    pairCountdownInterval = setInterval(() => {
-      remaining -= 1;
-      updateHint();
-      // If a new device just showed up while this code was active, it's a
-      // reasonable bet that this is the PC that just paired - close the
-      // dialog automatically so the admin sees it land in the list.
-      if (devices.length > pairedDeviceCountBefore) {
-        clearInterval(pairCountdownInterval);
-        els.pairDeviceForm.classList.add("hidden");
-        resetPairForm();
-        showToast("PC pareado com sucesso!");
-      }
-      if (remaining <= 0) clearInterval(pairCountdownInterval);
-    }, 1000);
+    showToast(`Licença ${res.key} criada!`);
   });
 });
 
@@ -336,3 +263,4 @@ els.saveButtonBtn.addEventListener("click", () => {
     showToast("Botão adicionado!");
   });
 });
+

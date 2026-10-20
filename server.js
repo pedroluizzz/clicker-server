@@ -1,20 +1,23 @@
 // server.js
 // Relay server with two separate roles:
 //
-// - ADMIN (password-protected, public/admin.html): controls which PCs
-//   ("devices") are registered and which alert buttons exist. Devices and
+// - ADMIN (password-protected, public/admin.html): controls which license
+//   keys exist and are active, and which alert buttons exist. Licenses and
 //   buttons are stored server-side (server/data/store.json), NOT in the
-//   operator's browser - operators never see a device's secret.
+//   operator's browser.
 // - OPERATOR (public/index.html, password-protected with a SEPARATE,
 //   lower-stakes password): just sees the list of alert buttons and can
 //   click them. Clicking asks the SERVER to relay the command to every
-//   registered device's agent - the operator's browser never talks to an
-//   agent directly and never handles deviceId/secret.
+//   active license's connected agent - the operator's browser never talks
+//   to an agent directly and never handles any license key.
 //
-// The agent (agent/agent.js) still connects here and "registers" itself
-// under a deviceId + secret pairing code, same as before - whether that
-// device is actually usable by operators depends on whether an admin has
-// added it to the registered device list.
+// The agent (agent/agent.js) connects here and "registers" itself with a
+// fixed license key (see DEFAULT_LICENSES below) - no expiring pairing
+// code and no separate deviceId/secret pair. Whoever installs the agent on
+// a PC just types in one of the license keys an admin gave them, and it
+// connects immediately and keeps reconnecting with that same key forever.
+// An admin can deactivate/reactivate or delete a license key at any time
+// from /admin.html, without needing to touch anything on the PC itself.
 
 const fs = require("fs");
 const path = require("path");
@@ -34,21 +37,40 @@ const COMMAND_TIMEOUT_MS = 8000;
 
 app.use(express.static(path.join(__dirname, "public")));
 
-// --- Persistent store (devices + buttons + admin password) ---------------
+// --- Persistent store (licenses + buttons + admin password) --------------
 // Written to a local JSON file so an admin's setup survives a simple
 // restart. Note: on some free hosting plans local disk doesn't survive a
-// full redeploy, so the admin password may be re-generated and devices/
-// buttons may need to be re-added after deploying a new version - devices
-// just need to be re-added with their existing deviceId/secret (the agent
-// keeps the same identity), nothing needs to change on the PC side.
+// full redeploy or a long idle spin-down, so added-on-the-fly data (extra
+// licenses, buttons, passwords) may need to be re-added. The 10 DEFAULT
+// license keys below are hardcoded in the source (not generated at
+// runtime), so they always come back exactly the same even if the data
+// file is lost - nobody needs to be told a new code after that happens.
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
+
+// Fixed, human-friendly license keys. These never change - handing one out
+// to someone is a one-time action; the agent stores it locally and
+// reconnects with it forever. Add more any time from the admin page
+// ("+ Gerar licença"); those extra ones are persisted in store.json like
+// everything else.
+const DEFAULT_LICENSES = [
+  "CLK-FZSN-3MHP",
+  "CLK-P6FJ-MHXF",
+  "CLK-Y94F-C8NE",
+  "CLK-ZAVV-7JKY",
+  "CLK-22FM-59A5",
+  "CLK-ZTA5-P3MF",
+  "CLK-WVPB-E7H5",
+  "CLK-DER7-Y3YE",
+  "CLK-QUJ8-Z5UZ",
+  "CLK-PBZK-HEK8",
+];
 
 function loadStore() {
   try {
     return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
   } catch {
-    return { devices: [], buttons: [], adminPassword: null, operatorPassword: null };
+    return { licenses: [], buttons: [], adminPassword: null, operatorPassword: null };
   }
 }
 
@@ -58,13 +80,29 @@ function saveStore() {
 }
 
 const store = loadStore();
-if (!Array.isArray(store.devices)) store.devices = [];
+if (!Array.isArray(store.licenses)) store.licenses = [];
 if (!Array.isArray(store.buttons)) store.buttons = [];
+
+// Make sure all 10 default licenses always exist, without touching any
+// extra ones an admin added manually (or re-adding one an admin deleted on
+// purpose would be surprising - so this only adds keys that are entirely
+// missing AND have never been explicitly removed before).
+if (!Array.isArray(store.removedDefaultLicenses)) store.removedDefaultLicenses = [];
+let seededDefaults = false;
+for (const key of DEFAULT_LICENSES) {
+  const alreadyRemoved = store.removedDefaultLicenses.includes(key);
+  const alreadyPresent = store.licenses.some((l) => l.key === key);
+  if (!alreadyPresent && !alreadyRemoved) {
+    store.licenses.push({ key, label: null, active: true });
+    seededDefaults = true;
+  }
+}
+if (seededDefaults) saveStore();
 
 // Resolve the admin password: an explicit ADMIN_PASSWORD env var always
 // wins (for deliberate control); otherwise reuse a previously generated one
 // so it stays stable across restarts; otherwise generate a fresh one and
-// persist + print it, the same way the agent prints its own deviceId/secret.
+// persist + print it.
 let adminPassword = process.env.ADMIN_PASSWORD || store.adminPassword;
 if (!adminPassword) {
   adminPassword = crypto.randomBytes(6).toString("hex");
@@ -98,32 +136,31 @@ if (!process.env.OPERATOR_PASSWORD) {
 }
 console.log("==============================================");
 
-// deviceId -> { secret, socketId } - tracks agents currently connected,
-// regardless of whether an admin has added them to the registered list yet.
+// license key -> { socketId, hostname } - tracks agents currently connected
+// with a valid, active license key.
 const agents = new Map();
 
 // token -> true, issued on successful login, cleared on restart.
 const adminTokens = new Set();
 const operatorTokens = new Set();
 
-// code -> { nickname, expiresAt } - short-lived codes an admin generates so
-// a new agent can self-register (see "agent:pair") instead of the admin
-// having to copy/paste that agent's deviceId/secret by hand.
-const pairingCodes = new Map();
-const PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
-
 // cmdId -> { resolve } - commands the server itself is waiting on an agent
 // to finish, triggered on behalf of an operator click.
 const pendingCommands = new Map();
 
-function isDeviceOnline(device) {
-  const agent = agents.get(device.deviceId);
-  return !!agent && agent.secret === device.secret;
-}
-
 function publicState() {
   return {
-    devices: store.devices.map((d) => ({ id: d.id, nickname: d.nickname, deviceId: d.deviceId, online: isDeviceOnline(d) })),
+    licenses: store.licenses.map((l) => {
+      const agent = agents.get(l.key);
+      const active = l.active !== false;
+      return {
+        key: l.key,
+        label: l.label || null,
+        active,
+        online: active && !!agent,
+        hostname: (agent && agent.hostname) || null,
+      };
+    }),
     buttons: store.buttons.map((b) => ({ id: b.id, label: b.label, systemSound: b.systemSound })),
   };
 }
@@ -158,37 +195,42 @@ function requireOperator(socket, token, ack) {
   return true;
 }
 
-// Generates a short, easy-to-type numeric code that isn't currently in use
-// by another still-valid pairing code.
-function generatePairingCode() {
-  let code;
+// Generates a fresh, unique license key in the same human-friendly format
+// as the 10 built-in ones (CLK-XXXX-XXXX, avoiding ambiguous characters
+// like 0/O/1/I).
+const LICENSE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+function generateLicenseKey() {
+  let key;
   do {
-    code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
-  } while (pairingCodes.has(code));
-  return code;
+    let s = "";
+    for (let i = 0; i < 8; i++) s += LICENSE_ALPHABET[crypto.randomInt(0, LICENSE_ALPHABET.length)];
+    key = `CLK-${s.slice(0, 4)}-${s.slice(4)}`;
+  } while (store.licenses.some((l) => l.key === key));
+  return key;
 }
 
-// Sends the sound command to one device's connected agent and resolves with
-// its result, or resolves with an offline/timeout error if it never
+// Sends the sound command to one license's connected agent and resolves
+// with its result, or resolves with an offline/timeout error if it never
 // responds (so one unreachable PC doesn't hang the whole trigger forever).
-function sendToDevice(device, action) {
+function sendToLicense(license, action) {
   return new Promise((resolve) => {
-    const agent = agents.get(device.deviceId);
-    if (!agent || agent.secret !== device.secret) {
-      return resolve({ nickname: device.nickname, ok: false, error: "PC offline" });
+    const label = license.label || license.key;
+    const agent = agents.get(license.key);
+    if (!agent) {
+      return resolve({ nickname: label, ok: false, error: "PC offline" });
     }
 
     const cmdId = crypto.randomUUID();
     const timeout = setTimeout(() => {
       pendingCommands.delete(cmdId);
-      resolve({ nickname: device.nickname, ok: false, error: "Tempo esgotado" });
+      resolve({ nickname: label, ok: false, error: "Tempo esgotado" });
     }, COMMAND_TIMEOUT_MS);
 
     pendingCommands.set(cmdId, {
       resolve: (payload) => {
         clearTimeout(timeout);
         resolve({
-          nickname: device.nickname,
+          nickname: label,
           ok: !!payload.ok,
           error: payload.error,
           execMs: payload.execMs,
@@ -202,51 +244,37 @@ function sendToDevice(device, action) {
 
 io.on("connection", (socket) => {
   // --- Agent side -----------------------------------------------------
-  socket.on("agent:register", ({ deviceId, secret }, ack) => {
-    if (!deviceId || !secret) {
-      return ack && ack({ ok: false, error: "deviceId e secret são obrigatórios" });
+  // The agent connects with a fixed license key (no expiring code, no
+  // separate deviceId/secret) - as long as the key exists and is active,
+  // it's accepted immediately and reconnects the same way forever.
+  socket.on("agent:register", ({ license, hostname }, ack) => {
+    if (!license) {
+      return ack && ack({ ok: false, error: "Licença é obrigatória" });
     }
 
-    const existing = agents.get(deviceId);
-    if (existing && existing.secret !== secret) {
-      return ack && ack({ ok: false, error: "Já existe um agente com esse deviceId e secret diferente" });
+    const entry = store.licenses.find((l) => l.key === license);
+    if (!entry) {
+      return ack && ack({ ok: false, error: "Licença inválida. Peça uma licença ao admin." });
+    }
+    if (entry.active === false) {
+      return ack && ack({ ok: false, error: "Licença desativada pelo admin. Peça para reativar, se precisar." });
     }
 
-    agents.set(deviceId, { secret, socketId: socket.id });
+    agents.set(license, { socketId: socket.id, hostname: hostname || null });
     socket.data.role = "agent";
-    socket.data.deviceId = deviceId;
+    socket.data.license = license;
 
-    console.log(`[agent] registrado: ${deviceId}`);
+    // Auto-fill a friendly label from the hostname the first time this
+    // license connects, so it doesn't just show the raw key in the admin
+    // list - the admin can still rename it anytime.
+    if (!entry.label && hostname) {
+      entry.label = hostname;
+      saveStore();
+    }
+
+    console.log(`[agent] registrado: ${license} (${hostname || "?"})`);
     broadcastState();
-    ack && ack({ ok: true });
-  });
-
-  // Lets a newly-installed agent register itself into the admin's device
-  // list using a short pairing code generated on the admin page, instead of
-  // the admin having to type the agent's deviceId/secret by hand.
-  socket.on("agent:pair", ({ code, deviceId, secret, hostname }, ack) => {
-    if (!code || !deviceId || !secret) {
-      return ack && ack({ ok: false, error: "Dados de pareamento incompletos" });
-    }
-
-    const pending = pairingCodes.get(code);
-    if (!pending || pending.expiresAt < Date.now()) {
-      pairingCodes.delete(code);
-      return ack && ack({ ok: false, error: "Código inválido ou expirado" });
-    }
-
-    if (store.devices.some((d) => d.deviceId === deviceId)) {
-      pairingCodes.delete(code);
-      return ack && ack({ ok: false, error: "Esse PC já está cadastrado" });
-    }
-
-    pairingCodes.delete(code);
-    const nickname = pending.nickname || hostname || `PC ${store.devices.length + 1}`;
-    store.devices.push({ id: crypto.randomUUID(), nickname, deviceId, secret });
-    saveStore();
-    broadcastState();
-    console.log(`[pareamento] PC "${nickname}" (${deviceId}) pareado via código`);
-    ack && ack({ ok: true, nickname });
+    ack && ack({ ok: true, label: entry.label || hostname || license });
   });
 
   socket.on("agent:result", (payload) => {
@@ -286,13 +314,15 @@ io.on("connection", (socket) => {
 
     const button = store.buttons.find((b) => b.id === buttonId);
     if (!button) return ack && ack({ ok: false, error: "Botão não encontrado" });
-    if (store.devices.length === 0) return ack && ack({ ok: false, error: "Nenhum PC cadastrado" });
+
+    const activeLicenses = store.licenses.filter((l) => l.active !== false);
+    if (activeLicenses.length === 0) return ack && ack({ ok: false, error: "Nenhum PC disponível" });
 
     const action = button.systemSound
       ? { type: "sound", systemSound: button.systemSound }
       : { type: "sound", frequency: 880, duration: 400 };
 
-    const results = await Promise.all(store.devices.map((d) => sendToDevice(d, action)));
+    const results = await Promise.all(activeLicenses.map((l) => sendToLicense(l, action)));
     const okCount = results.filter((r) => r.ok).length;
     ack && ack({ ok: okCount === results.length, results });
   });
@@ -313,37 +343,50 @@ io.on("connection", (socket) => {
     ack && ack({ ok: true, ...publicState() });
   });
 
-  // Generates a short-lived code the admin shares with whoever is setting
-  // up a new PC - the agent uses it (via "agent:pair") to add itself to the
-  // device list without the admin typing its deviceId/secret manually.
-  socket.on("admin:generatePairingCode", ({ token, nickname }, ack) => {
+  // Creates a brand new license key (beyond the 10 built-in ones) that can
+  // be handed out to install the agent on another PC.
+  socket.on("admin:addLicense", ({ token, label }, ack) => {
     if (!requireAdmin(socket, token, ack)) return;
-    const code = generatePairingCode();
-    const expiresAt = Date.now() + PAIRING_CODE_TTL_MS;
-    pairingCodes.set(code, { nickname: (nickname || "").trim() || null, expiresAt });
-    ack && ack({ ok: true, code, expiresInSec: PAIRING_CODE_TTL_MS / 1000 });
+    const key = generateLicenseKey();
+    store.licenses.push({ key, label: (label || "").trim() || null, active: true });
+    saveStore();
+    broadcastState();
+    ack && ack({ ok: true, key });
   });
 
-  socket.on("admin:addDevice", ({ token, nickname, deviceId, secret }, ack) => {
+  // Permanently deletes a license key. If it's one of the 10 built-in
+  // ones, remember that so it doesn't silently come back on next restart.
+  socket.on("admin:removeLicense", ({ token, key }, ack) => {
     if (!requireAdmin(socket, token, ack)) return;
-    if (!deviceId || !secret) return ack && ack({ ok: false, error: "deviceId e secret são obrigatórios" });
-    if (store.devices.some((d) => d.deviceId === deviceId)) {
-      return ack && ack({ ok: false, error: "Esse PC já está cadastrado" });
+    store.licenses = store.licenses.filter((l) => l.key !== key);
+    agents.delete(key);
+    if (DEFAULT_LICENSES.includes(key) && !store.removedDefaultLicenses.includes(key)) {
+      store.removedDefaultLicenses.push(key);
     }
-    store.devices.push({
-      id: crypto.randomUUID(),
-      nickname: nickname || `PC ${store.devices.length + 1}`,
-      deviceId,
-      secret,
-    });
     saveStore();
     broadcastState();
     ack && ack({ ok: true });
   });
 
-  socket.on("admin:removeDevice", ({ token, id }, ack) => {
+  // Turns a license on/off without deleting it. Deactivating immediately
+  // stops it from receiving alerts; reactivating brings it back online
+  // right away if the agent is still connected with that key, with
+  // nothing to redo on the PC itself.
+  socket.on("admin:setLicenseActive", ({ token, key, active }, ack) => {
     if (!requireAdmin(socket, token, ack)) return;
-    store.devices = store.devices.filter((d) => d.id !== id);
+    const entry = store.licenses.find((l) => l.key === key);
+    if (!entry) return ack && ack({ ok: false, error: "Licença não encontrada" });
+    entry.active = !!active;
+    saveStore();
+    broadcastState();
+    ack && ack({ ok: true });
+  });
+
+  socket.on("admin:renameLicense", ({ token, key, label }, ack) => {
+    if (!requireAdmin(socket, token, ack)) return;
+    const entry = store.licenses.find((l) => l.key === key);
+    if (!entry) return ack && ack({ ok: false, error: "Licença não encontrada" });
+    entry.label = (label || "").trim() || null;
     saveStore();
     broadcastState();
     ack && ack({ ok: true });
@@ -368,26 +411,17 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    if (socket.data.role === "agent" && socket.data.deviceId) {
-      const deviceId = socket.data.deviceId;
-      const agent = agents.get(deviceId);
+    if (socket.data.role === "agent" && socket.data.license) {
+      const license = socket.data.license;
+      const agent = agents.get(license);
       if (agent && agent.socketId === socket.id) {
-        agents.delete(deviceId);
-        console.log(`[agent] desconectado: ${deviceId}`);
+        agents.delete(license);
+        console.log(`[agent] desconectado: ${license}`);
         broadcastState();
       }
     }
   });
 });
-
-// Sweep expired pairing codes periodically so the map doesn't grow forever
-// if an admin generates codes that never get used.
-setInterval(() => {
-  const now = Date.now();
-  for (const [code, data] of pairingCodes) {
-    if (data.expiresAt < now) pairingCodes.delete(code);
-  }
-}, 60 * 1000).unref();
 
 server.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);

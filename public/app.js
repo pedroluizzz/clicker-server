@@ -2,11 +2,11 @@
 // Password-protected (a SEPARATE, lower-stakes password from the admin
 // one). After logging in, this page only shows the alert buttons that an
 // admin configured on the server, and lets the operator click them to
-// trigger a sound alert on every registered PC.
-// Device/button configuration lives entirely on the server (server/data/
-// store.json) - this page never sees a device's deviceId/secret, and the
-// operator password only grants permission to view/click buttons, not to
-// add or remove anything.
+// trigger a sound alert on every PC with an active license.
+// License/button configuration lives entirely on the server (server/data/
+// store.json) - this page never sees any license key, and the operator
+// password only grants permission to view/click buttons, not to add or
+// remove anything.
 
 const TOKEN_KEY = "clicker.operatorToken";
 
@@ -26,7 +26,7 @@ const els = {
 
 let token = localStorage.getItem(TOKEN_KEY) || null;
 let buttons = [];
-let devices = [];
+let licenses = [];
 let sending = false;
 
 function escapeHtml(s) {
@@ -58,13 +58,14 @@ function showLoggedOut(message) {
   if (message) els.loginHint.textContent = message;
 }
 
-function updateStatusFromDevices() {
-  const total = devices.length;
+function updateStatusFromLicenses() {
+  const active = licenses.filter((l) => l.active);
+  const total = active.length;
   if (total === 0) {
     setStatus("offline", "Nenhum PC cadastrado");
     return;
   }
-  const onlineCount = devices.filter((d) => d.online).length;
+  const onlineCount = active.filter((l) => l.online).length;
   if (onlineCount === total) setStatus("online", `${onlineCount}/${total} PCs online`);
   else if (onlineCount === 0) setStatus("offline", `0/${total} PCs online`);
   else setStatus("connecting", `${onlineCount}/${total} PCs online`);
@@ -166,9 +167,9 @@ function fetchState() {
 
 function applyState(state) {
   if (!state) return;
-  devices = state.devices || [];
+  licenses = state.licenses || [];
   buttons = state.buttons || [];
-  updateStatusFromDevices();
+  updateStatusFromLicenses();
   renderButtons();
 }
 
