@@ -1,9 +1,10 @@
 // admin.js - admin page logic.
 // Password-protected (server-side check via "admin:login"). After login,
 // the admin can create/rename/activate/deactivate/remove license keys and
-// manage alert buttons - this is the ONLY place that ever handles a
-// license key besides the agent itself. Operators (index.html/app.js)
-// never see this data; they only click buttons.
+// manage alert buttons + message presets - this is the ONLY place that
+// ever handles a license key or raw audio data besides the agent itself.
+// Operators (index.html/app.js) never see this data; they only click
+// buttons/messages.
 
 const els = {
   statusDot: document.getElementById("statusDot"),
@@ -17,10 +18,17 @@ const els = {
   licensesList: document.getElementById("licensesList"),
   addLicenseBtn: document.getElementById("addLicenseBtn"),
   buttonsList: document.getElementById("buttonsList"),
+  messagesList: document.getElementById("messagesList"),
   addButtonToggleBtn: document.getElementById("addButtonToggleBtn"),
+  addMessageToggleBtn: document.getElementById("addMessageToggleBtn"),
   addButtonForm: document.getElementById("addButtonForm"),
+  addButtonFormTitle: document.getElementById("addButtonFormTitle"),
   newButtonLabel: document.getElementById("newButtonLabel"),
+  newButtonSoundType: document.getElementById("newButtonSoundType"),
+  systemSoundRow: document.getElementById("systemSoundRow"),
   newButtonSound: document.getElementById("newButtonSound"),
+  customAudioRow: document.getElementById("customAudioRow"),
+  newButtonAudioFile: document.getElementById("newButtonAudioFile"),
   saveButtonBtn: document.getElementById("saveButtonBtn"),
   cancelButtonBtn: document.getElementById("cancelButtonBtn"),
   toast: document.getElementById("toast"),
@@ -30,6 +38,7 @@ let socket = io();
 let token = sessionStorage.getItem("clicker.adminToken") || null;
 let licenses = [];
 let buttons = [];
+let pendingCategory = "alert";
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -204,63 +213,144 @@ els.addLicenseBtn.addEventListener("click", () => {
   });
 });
 
-// --- Buttons --------------------------------------------------------------
+// --- Buttons & Messages ----------------------------------------------------
+
+function renderPresetRow(container, b) {
+  const row = document.createElement("div");
+  row.className = "device-row";
+  const icon = b.hasCustomAudio ? "🎵" : "🔊";
+  row.innerHTML = `<span class="device-nickname">${icon} ${escapeHtml(b.label)}</span>`;
+
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "remove";
+  removeBtn.textContent = "✕";
+  removeBtn.addEventListener("click", () => {
+    socket.emit("admin:removeButton", { token, id: b.id }, (res) => {
+      if (!res || !res.ok) showToast((res && res.error) || "Erro ao remover", "error");
+    });
+  });
+  row.appendChild(removeBtn);
+  container.appendChild(row);
+}
 
 function renderButtonsList() {
   els.buttonsList.innerHTML = "";
-  if (buttons.length === 0) {
+  els.messagesList.innerHTML = "";
+
+  const alerts = buttons.filter((b) => (b.category || "alert") !== "message");
+  const messages = buttons.filter((b) => b.category === "message");
+
+  if (alerts.length === 0) {
     const empty = document.createElement("p");
     empty.className = "hint";
     empty.textContent = 'Nenhum botão cadastrado ainda. Clique em "+ Adicionar botão".';
     els.buttonsList.appendChild(empty);
   }
+  alerts.forEach((b) => renderPresetRow(els.buttonsList, b));
 
-  buttons.forEach((b) => {
-    const row = document.createElement("div");
-    row.className = "device-row";
-    row.innerHTML = `<span class="device-nickname">🔊 ${escapeHtml(b.label)}</span>`;
+  if (messages.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = 'Nenhuma mensagem cadastrada ainda. Clique em "+ Adicionar mensagem".';
+    els.messagesList.appendChild(empty);
+  }
+  messages.forEach((b) => renderPresetRow(els.messagesList, b));
+}
 
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "remove";
-    removeBtn.textContent = "✕";
-    removeBtn.addEventListener("click", () => {
-      socket.emit("admin:removeButton", { token, id: b.id }, (res) => {
-        if (!res || !res.ok) showToast((res && res.error) || "Erro ao remover", "error");
-      });
-    });
-    row.appendChild(removeBtn);
-    els.buttonsList.appendChild(row);
-  });
+function resetAddButtonForm() {
+  els.newButtonLabel.value = "";
+  els.newButtonSoundType.value = "tone";
+  els.newButtonSound.value = "Asterisk";
+  els.newButtonAudioFile.value = "";
+  els.systemSoundRow.classList.add("hidden");
+  els.customAudioRow.classList.add("hidden");
+}
+
+function openAddForm(category) {
+  pendingCategory = category;
+  els.addButtonFormTitle.textContent = category === "message" ? "Adicionar mensagem" : "Adicionar botão";
+  resetAddButtonForm();
+  els.addButtonForm.classList.remove("hidden");
 }
 
 els.addButtonToggleBtn.addEventListener("click", () => {
-  els.addButtonForm.classList.toggle("hidden");
+  if (!els.addButtonForm.classList.contains("hidden") && pendingCategory === "alert") {
+    els.addButtonForm.classList.add("hidden");
+  } else {
+    openAddForm("alert");
+  }
+});
+
+els.addMessageToggleBtn.addEventListener("click", () => {
+  if (!els.addButtonForm.classList.contains("hidden") && pendingCategory === "message") {
+    els.addButtonForm.classList.add("hidden");
+  } else {
+    openAddForm("message");
+  }
+});
+
+els.newButtonSoundType.addEventListener("change", () => {
+  const v = els.newButtonSoundType.value;
+  els.systemSoundRow.classList.toggle("hidden", v !== "system");
+  els.customAudioRow.classList.toggle("hidden", v !== "custom");
 });
 
 els.cancelButtonBtn.addEventListener("click", () => {
   els.addButtonForm.classList.add("hidden");
-  els.newButtonLabel.value = "";
-  els.newButtonSound.value = "";
+  resetAddButtonForm();
 });
 
-els.saveButtonBtn.addEventListener("click", () => {
-  const label = els.newButtonLabel.value.trim();
-  const systemSound = els.newButtonSound.value || null;
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("Falha ao ler o arquivo"));
+    reader.readAsDataURL(file);
+  });
+}
 
+els.saveButtonBtn.addEventListener("click", async () => {
+  const label = els.newButtonLabel.value.trim();
   if (!label) {
-    showToast("Dê um nome ao botão", "error");
+    showToast("Dê um nome", "error");
     return;
   }
 
-  socket.emit("admin:addButton", { token, label, systemSound }, (res) => {
+  const soundType = els.newButtonSoundType.value;
+  let systemSound = null;
+  let customAudio = null;
+
+  if (soundType === "system") {
+    systemSound = els.newButtonSound.value || null;
+  } else if (soundType === "custom") {
+    const file = els.newButtonAudioFile.files[0];
+    if (!file) {
+      showToast("Escolha um arquivo de áudio", "error");
+      return;
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      showToast("Áudio muito grande (máx. 3MB)", "error");
+      return;
+    }
+    let audioBase64;
+    try {
+      audioBase64 = await readFileAsBase64(file);
+    } catch (err) {
+      showToast(err.message || "Erro ao ler o arquivo", "error");
+      return;
+    }
+    const ext = "." + (file.name.split(".").pop() || "wav").toLowerCase();
+    customAudio = { audioBase64, mimeType: file.type || "audio/wav", ext };
+  }
+
+  socket.emit("admin:addButton", { token, label, category: pendingCategory, systemSound, customAudio }, (res) => {
     if (!res || !res.ok) {
       showToast((res && res.error) || "Erro ao adicionar", "error");
       return;
     }
-    els.newButtonLabel.value = "";
-    els.newButtonSound.value = "";
     els.addButtonForm.classList.add("hidden");
-    showToast("Botão adicionado!");
+    resetAddButtonForm();
+    showToast(pendingCategory === "message" ? "Mensagem adicionada!" : "Botão adicionado!");
   });
 });
 

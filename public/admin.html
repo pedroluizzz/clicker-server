@@ -48,24 +48,51 @@
         <h2>Botões de alerta</h2>
         <button id="addButtonToggleBtn" class="secondary">+ Adicionar botão</button>
       </div>
+      <p class="hint">Dispara o mesmo som de sempre (bipe/som do sistema) em todos os PCs ativos.</p>
 
       <div id="buttonsList" class="devices-list"></div>
 
+      <div class="dashboard-header" style="margin-top: 24px;">
+        <h2>Mensagens</h2>
+        <button id="addMessageToggleBtn" class="secondary">+ Adicionar mensagem</button>
+      </div>
+      <p class="hint">
+        Para situações diferentes do alerta - use um som diferente (ou um áudio próprio) para não
+        confundir com o alerta normal.
+      </p>
+
+      <div id="messagesList" class="devices-list"></div>
+
       <div id="addButtonForm" class="edit-panel hidden">
-        <h3>Adicionar botão</h3>
+        <h3 id="addButtonFormTitle">Adicionar botão</h3>
         <div class="form-row">
-          <label>Nome do botão</label>
+          <label>Nome</label>
           <input id="newButtonLabel" type="text" placeholder="ex: Alerta de urgência" />
         </div>
         <div class="form-row">
           <label>Som</label>
-          <select id="newButtonSound">
-            <option value="">Tom sonoro (bip)</option>
-            <option value="Asterisk">Som do sistema: Asterisk</option>
-            <option value="Exclamation">Som do sistema: Exclamation</option>
-            <option value="Hand">Som do sistema: Hand</option>
-            <option value="Question">Som do sistema: Question</option>
+          <select id="newButtonSoundType">
+            <option value="tone">Tom sonoro (bipe)</option>
+            <option value="system">Som do sistema do Windows</option>
+            <option value="custom">Áudio próprio (upload)</option>
           </select>
+        </div>
+        <div class="form-row" id="systemSoundRow">
+          <label>Qual som</label>
+          <select id="newButtonSound">
+            <option value="Asterisk">Asterisk</option>
+            <option value="Exclamation">Exclamation</option>
+            <option value="Hand">Hand</option>
+            <option value="Question">Question</option>
+          </select>
+        </div>
+        <div class="form-row hidden" id="customAudioRow">
+          <label>Arquivo de áudio</label>
+          <input id="newButtonAudioFile" type="file" accept="audio/*" />
+          <p class="hint">
+            .wav toca com mais precisão; .mp3/.m4a/.ogg também funcionam (melhor esforço). Até 3MB,
+            prefira clipes curtos (poucos segundos).
+          </p>
         </div>
         <div class="form-row">
           <button id="saveButtonBtn">Adicionar</button>

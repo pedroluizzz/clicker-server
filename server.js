@@ -2,14 +2,19 @@
 // Relay server with two separate roles:
 //
 // - ADMIN (password-protected, public/admin.html): controls which license
-//   keys exist and are active, and which alert buttons exist. Licenses and
-//   buttons are stored server-side (server/data/store.json), NOT in the
-//   operator's browser.
+//   keys exist and are active, and manages two kinds of presets - "alert"
+//   buttons and "message" presets. Both work the same way under the hood
+//   (a sound command broadcast to every active license), just shown in
+//   separate sections so operators don't confuse them; each can use a
+//   beep tone, a Windows system sound, or a custom uploaded audio file.
+//   Licenses and presets are stored server-side (server/data/store.json),
+//   NOT in the operator's browser.
 // - OPERATOR (public/index.html, password-protected with a SEPARATE,
-//   lower-stakes password): just sees the list of alert buttons and can
-//   click them. Clicking asks the SERVER to relay the command to every
-//   active license's connected agent - the operator's browser never talks
-//   to an agent directly and never handles any license key.
+//   lower-stakes password): just sees the alert buttons and message
+//   presets and can click them. Clicking asks the SERVER to relay the
+//   command to every active license's connected agent - the operator's
+//   browser never talks to an agent directly and never handles any
+//   license key or raw audio data.
 //
 // The agent (agent/agent.js) connects here and "registers" itself with a
 // fixed license key (see DEFAULT_LICENSES below) - no expiring pairing
@@ -18,6 +23,11 @@
 // connects immediately and keeps reconnecting with that same key forever.
 // An admin can deactivate/reactivate or delete a license key at any time
 // from /admin.html, without needing to touch anything on the PC itself.
+//
+// Custom audio: to keep every trigger fast, a command never inlines the
+// actual audio bytes - it only carries a content hash. The agent caches
+// audio locally by hash and only asks the server for the real bytes
+// (via "agent:fetchSound") the first time it sees a new hash.
 
 const fs = require("fs");
 const path = require("path");
@@ -34,6 +44,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const COMMAND_TIMEOUT_MS = 8000;
+const MAX_BUTTONS = 10; // shared cap across both "alert" and "message" categories
+const MAX_CUSTOM_AUDIO_BYTES = 3 * 1024 * 1024; // 3MB raw (before base64)
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -161,7 +173,13 @@ function publicState() {
         hostname: (agent && agent.hostname) || null,
       };
     }),
-    buttons: store.buttons.map((b) => ({ id: b.id, label: b.label, systemSound: b.systemSound })),
+    buttons: store.buttons.map((b) => ({
+      id: b.id,
+      label: b.label,
+      category: b.category === "message" ? "message" : "alert",
+      systemSound: b.systemSound || null,
+      hasCustomAudio: !!b.customAudio,
+    })),
   };
 }
 
@@ -207,6 +225,21 @@ function generateLicenseKey() {
     key = `CLK-${s.slice(0, 4)}-${s.slice(4)}`;
   } while (store.licenses.some((l) => l.key === key));
   return key;
+}
+
+// Builds the lightweight command payload for a button/message. Custom audio
+// is NEVER inlined here - only its hash/extension are sent, so a trigger
+// stays small and fast; the agent fetches (and caches) the actual audio
+// bytes separately, only the first time it ever sees that hash (see
+// "agent:fetchSound" below).
+function buildAction(button) {
+  if (button.customAudio) {
+    return { type: "playAudio", soundId: button.id, hash: button.customAudio.hash, ext: button.customAudio.ext };
+  }
+  if (button.systemSound) {
+    return { type: "sound", systemSound: button.systemSound };
+  }
+  return { type: "sound", frequency: 880, duration: 400 };
 }
 
 // Sends the sound command to one license's connected agent and resolves
@@ -318,9 +351,7 @@ io.on("connection", (socket) => {
     const activeLicenses = store.licenses.filter((l) => l.active !== false);
     if (activeLicenses.length === 0) return ack && ack({ ok: false, error: "Nenhum PC disponível" });
 
-    const action = button.systemSound
-      ? { type: "sound", systemSound: button.systemSound }
-      : { type: "sound", frequency: 880, duration: 400 };
+    const action = buildAction(button);
 
     const results = await Promise.all(activeLicenses.map((l) => sendToLicense(l, action)));
     const okCount = results.filter((r) => r.ok).length;
@@ -392,11 +423,42 @@ io.on("connection", (socket) => {
     ack && ack({ ok: true });
   });
 
-  socket.on("admin:addButton", ({ token, label, systemSound }, ack) => {
+  socket.on("admin:addButton", ({ token, label, category, systemSound, customAudio }, ack) => {
     if (!requireAdmin(socket, token, ack)) return;
-    if (!label || !label.trim()) return ack && ack({ ok: false, error: "Informe um nome para o botão" });
-    if (store.buttons.length >= 5) return ack && ack({ ok: false, error: "Máximo de 5 botões" });
-    store.buttons.push({ id: crypto.randomUUID(), label: label.trim(), systemSound: systemSound || null });
+    if (!label || !label.trim()) return ack && ack({ ok: false, error: "Informe um nome" });
+    if (store.buttons.length >= MAX_BUTTONS) {
+      return ack && ack({ ok: false, error: `Máximo de ${MAX_BUTTONS} botões/mensagens no total` });
+    }
+
+    let customAudioEntry = null;
+    if (customAudio && customAudio.audioBase64) {
+      let raw;
+      try {
+        raw = Buffer.from(customAudio.audioBase64, "base64");
+      } catch {
+        return ack && ack({ ok: false, error: "Áudio inválido" });
+      }
+      if (raw.length === 0) return ack && ack({ ok: false, error: "Áudio inválido" });
+      if (raw.length > MAX_CUSTOM_AUDIO_BYTES) {
+        return ack && ack({ ok: false, error: `Áudio muito grande (máx. ${MAX_CUSTOM_AUDIO_BYTES / 1024 / 1024}MB)` });
+      }
+      const hash = crypto.createHash("sha256").update(raw).digest("hex");
+      const ext = (customAudio.ext || ".wav").toLowerCase().replace(/[^a-z0-9.]/g, "") || ".wav";
+      customAudioEntry = {
+        audioBase64: customAudio.audioBase64,
+        mimeType: customAudio.mimeType || "audio/wav",
+        hash,
+        ext: ext.startsWith(".") ? ext : "." + ext,
+      };
+    }
+
+    store.buttons.push({
+      id: crypto.randomUUID(),
+      label: label.trim(),
+      category: category === "message" ? "message" : "alert",
+      systemSound: customAudioEntry ? null : systemSound || null,
+      customAudio: customAudioEntry,
+    });
     saveStore();
     broadcastState();
     ack && ack({ ok: true });
@@ -408,6 +470,25 @@ io.on("connection", (socket) => {
     saveStore();
     broadcastState();
     ack && ack({ ok: true });
+  });
+
+  // The agent calls this when it needs to play a custom-audio command but
+  // doesn't have that exact audio cached locally yet (first time ever, or
+  // the admin replaced the file) - see agent.js's ensureSoundCached(). Kept
+  // as a separate on-demand fetch (instead of always inlining audio in
+  // every "command") so routine triggers stay small and fast.
+  socket.on("agent:fetchSound", ({ soundId }, ack) => {
+    if (socket.data.role !== "agent") return ack && ack({ ok: false, error: "Não autorizado" });
+    const button = store.buttons.find((b) => b.id === soundId && b.customAudio);
+    if (!button) return ack && ack({ ok: false, error: "Áudio não encontrado" });
+    ack &&
+      ack({
+        ok: true,
+        audioBase64: button.customAudio.audioBase64,
+        mimeType: button.customAudio.mimeType,
+        hash: button.customAudio.hash,
+        ext: button.customAudio.ext,
+      });
   });
 
   socket.on("disconnect", () => {

@@ -121,6 +121,21 @@ button.secondary:hover { background: #343a68; color: var(--text); }
   transform: scale(0.97);
 }
 
+.message-button {
+  background: linear-gradient(145deg, #142230, #060d12);
+  border-color: #223a4a;
+}
+
+.message-button:hover {
+  background: linear-gradient(145deg, #1a2d3f, #0a1318);
+}
+
+#messagesHeading {
+  margin-top: 28px;
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+
 .action-button.empty {
   background: #151729;
   border: 2px dashed #34395e;

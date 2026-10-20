@@ -20,6 +20,8 @@ const els = {
   dashboardSection: document.getElementById("dashboardSection"),
   noButtonsHint: document.getElementById("noButtonsHint"),
   buttonsGrid: document.getElementById("buttonsGrid"),
+  messagesHeading: document.getElementById("messagesHeading"),
+  messagesGrid: document.getElementById("messagesGrid"),
   toast: document.getElementById("toast"),
   latencyBar: document.getElementById("latencyBar"),
 };
@@ -72,15 +74,27 @@ function updateStatusFromLicenses() {
 }
 
 function renderButtons() {
-  els.buttonsGrid.innerHTML = "";
-  els.noButtonsHint.classList.toggle("hidden", buttons.length > 0);
+  const alerts = buttons.filter((b) => (b.category || "alert") !== "message");
+  const messages = buttons.filter((b) => b.category === "message");
 
-  buttons.forEach((btn) => {
+  els.buttonsGrid.innerHTML = "";
+  els.noButtonsHint.classList.toggle("hidden", alerts.length > 0);
+  alerts.forEach((btn) => {
     const el = document.createElement("div");
     el.className = "action-button";
     el.textContent = `🔊 ${btn.label}`;
     el.addEventListener("click", () => triggerButton(btn));
     els.buttonsGrid.appendChild(el);
+  });
+
+  els.messagesGrid.innerHTML = "";
+  els.messagesHeading.classList.toggle("hidden", messages.length === 0);
+  messages.forEach((btn) => {
+    const el = document.createElement("div");
+    el.className = "action-button message-button";
+    el.textContent = `💬 ${btn.label}`;
+    el.addEventListener("click", () => triggerButton(btn));
+    els.messagesGrid.appendChild(el);
   });
 }
 
