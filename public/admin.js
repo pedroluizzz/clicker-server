@@ -24,6 +24,9 @@ const els = {
   addButtonForm: document.getElementById("addButtonForm"),
   addButtonFormTitle: document.getElementById("addButtonFormTitle"),
   newButtonLabel: document.getElementById("newButtonLabel"),
+  messageTextRow: document.getElementById("messageTextRow"),
+  newButtonText: document.getElementById("newButtonText"),
+  soundFieldLabel: document.getElementById("soundFieldLabel"),
   newButtonSoundType: document.getElementById("newButtonSoundType"),
   systemSoundRow: document.getElementById("systemSoundRow"),
   newButtonSound: document.getElementById("newButtonSound"),
@@ -219,7 +222,12 @@ function renderPresetRow(container, b) {
   const row = document.createElement("div");
   row.className = "device-row";
   const icon = b.hasCustomAudio ? "🎵" : "🔊";
-  row.innerHTML = `<span class="device-nickname">${icon} ${escapeHtml(b.label)}</span>`;
+  let labelHtml = `<span class="device-nickname">${icon} ${escapeHtml(b.label)}</span>`;
+  if (b.category === "message" && b.text) {
+    const preview = b.text.length > 50 ? b.text.slice(0, 50) + "…" : b.text;
+    labelHtml = `<span class="device-nickname">💬 ${escapeHtml(b.label)} <span class="message-preview">— "${escapeHtml(preview)}"</span></span>`;
+  }
+  row.innerHTML = labelHtml;
 
   const removeBtn = document.createElement("button");
   removeBtn.className = "remove";
@@ -259,6 +267,7 @@ function renderButtonsList() {
 
 function resetAddButtonForm() {
   els.newButtonLabel.value = "";
+  els.newButtonText.value = "";
   els.newButtonSoundType.value = "tone";
   els.newButtonSound.value = "Asterisk";
   els.newButtonAudioFile.value = "";
@@ -268,7 +277,10 @@ function resetAddButtonForm() {
 
 function openAddForm(category) {
   pendingCategory = category;
-  els.addButtonFormTitle.textContent = category === "message" ? "Adicionar mensagem" : "Adicionar botão";
+  const isMessage = category === "message";
+  els.addButtonFormTitle.textContent = isMessage ? "Adicionar mensagem" : "Adicionar botão";
+  els.messageTextRow.classList.toggle("hidden", !isMessage);
+  els.soundFieldLabel.textContent = isMessage ? "Som de notificação (toca junto com o texto)" : "Som";
   resetAddButtonForm();
   els.addButtonForm.classList.remove("hidden");
 }
@@ -316,6 +328,15 @@ els.saveButtonBtn.addEventListener("click", async () => {
     return;
   }
 
+  let text = null;
+  if (pendingCategory === "message") {
+    text = els.newButtonText.value.trim();
+    if (!text) {
+      showToast("Escreva o texto da mensagem", "error");
+      return;
+    }
+  }
+
   const soundType = els.newButtonSoundType.value;
   let systemSound = null;
   let customAudio = null;
@@ -343,7 +364,7 @@ els.saveButtonBtn.addEventListener("click", async () => {
     customAudio = { audioBase64, mimeType: file.type || "audio/wav", ext };
   }
 
-  socket.emit("admin:addButton", { token, label, category: pendingCategory, systemSound, customAudio }, (res) => {
+  socket.emit("admin:addButton", { token, label, category: pendingCategory, text, systemSound, customAudio }, (res) => {
     if (!res || !res.ok) {
       showToast((res && res.error) || "Erro ao adicionar", "error");
       return;

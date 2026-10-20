@@ -91,8 +91,9 @@ function renderButtons() {
   els.messagesHeading.classList.toggle("hidden", messages.length === 0);
   messages.forEach((btn) => {
     const el = document.createElement("div");
-    el.className = "action-button message-button";
+    el.className = "message-chip";
     el.textContent = `💬 ${btn.label}`;
+    if (btn.text) el.title = btn.text;
     el.addEventListener("click", () => triggerButton(btn));
     els.messagesGrid.appendChild(el);
   });

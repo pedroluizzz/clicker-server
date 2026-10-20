@@ -52,14 +52,17 @@ main { max-width: 640px; margin: 0 auto; padding: 24px 16px 80px; }
 
 label { font-size: 0.85rem; color: var(--muted); }
 
-input, select {
+input, select, textarea {
   background: #11142a;
   border: 1px solid #2e3356;
   color: var(--text);
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 1rem;
+  font-family: inherit;
 }
+
+textarea { resize: vertical; }
 
 button {
   background: var(--accent);
@@ -121,13 +124,31 @@ button.secondary:hover { background: #343a68; color: var(--text); }
   transform: scale(0.97);
 }
 
-.message-button {
-  background: linear-gradient(145deg, #142230, #060d12);
-  border-color: #223a4a;
+.messages-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
 }
 
-.message-button:hover {
+.message-chip {
+  background: linear-gradient(145deg, #142230, #060d12);
+  border: 1px solid #223a4a;
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.08s ease, background 0.2s ease;
+}
+
+.message-chip:hover {
   background: linear-gradient(145deg, #1a2d3f, #0a1318);
+}
+
+.message-chip:active {
+  transform: scale(0.95);
 }
 
 #messagesHeading {
@@ -215,6 +236,8 @@ button.secondary:hover { background: #343a68; color: var(--text); }
 .device-row.inactive { opacity: 0.55; }
 
 .device-nickname { font-weight: 600; flex: 1; }
+
+.message-preview { font-weight: 400; color: var(--muted); font-size: 0.85rem; }
 
 .license-label-input {
   flex: 1;

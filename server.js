@@ -3,12 +3,13 @@
 //
 // - ADMIN (password-protected, public/admin.html): controls which license
 //   keys exist and are active, and manages two kinds of presets - "alert"
-//   buttons and "message" presets. Both work the same way under the hood
-//   (a sound command broadcast to every active license), just shown in
-//   separate sections so operators don't confuse them; each can use a
-//   beep tone, a Windows system sound, or a custom uploaded audio file.
-//   Licenses and presets are stored server-side (server/data/store.json),
-//   NOT in the operator's browser.
+//   buttons (sound only - a big, hard-to-miss button on the operator page)
+//   and "message" presets (sound + actual TEXT content, shown prominently
+//   on the receiving PC's screen, as small buttons below the alert ones so
+//   they're never confused with it). Each preset's notification sound can
+//   be a beep tone, a Windows system sound, or a custom uploaded audio
+//   file. Licenses and presets are stored server-side
+//   (server/data/store.json), NOT in the operator's browser.
 // - OPERATOR (public/index.html, password-protected with a SEPARATE,
 //   lower-stakes password): just sees the alert buttons and message
 //   presets and can click them. Clicking asks the SERVER to relay the
@@ -46,6 +47,7 @@ const PORT = process.env.PORT || 3000;
 const COMMAND_TIMEOUT_MS = 8000;
 const MAX_BUTTONS = 10; // shared cap across both "alert" and "message" categories
 const MAX_CUSTOM_AUDIO_BYTES = 3 * 1024 * 1024; // 3MB raw (before base64)
+const MAX_MESSAGE_TEXT_LENGTH = 300;
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -177,6 +179,7 @@ function publicState() {
       id: b.id,
       label: b.label,
       category: b.category === "message" ? "message" : "alert",
+      text: b.category === "message" ? b.text || "" : undefined,
       systemSound: b.systemSound || null,
       hasCustomAudio: !!b.customAudio,
     })),
@@ -227,12 +230,15 @@ function generateLicenseKey() {
   return key;
 }
 
-// Builds the lightweight command payload for a button/message. Custom audio
-// is NEVER inlined here - only its hash/extension are sent, so a trigger
-// stays small and fast; the agent fetches (and caches) the actual audio
-// bytes separately, only the first time it ever sees that hash (see
+// Builds just the sound sub-action for a button (tone / Windows system sound
+// / custom uploaded audio) - shared by both "alert" buttons (sent as-is) and
+// "message" presets (sent nested inside a "message" action, as the
+// attention-grabbing notification sound that accompanies the text). Custom
+// audio is NEVER inlined here - only its hash/extension are sent, so a
+// trigger stays small and fast; the agent fetches (and caches) the actual
+// audio bytes separately, only the first time it ever sees that hash (see
 // "agent:fetchSound" below).
-function buildAction(button) {
+function buildSoundAction(button) {
   if (button.customAudio) {
     return { type: "playAudio", soundId: button.id, hash: button.customAudio.hash, ext: button.customAudio.ext };
   }
@@ -240,6 +246,19 @@ function buildAction(button) {
     return { type: "sound", systemSound: button.systemSound };
   }
   return { type: "sound", frequency: 880, duration: 400 };
+}
+
+// Builds the full command payload for a button/message. "alert" buttons are
+// just the sound. "message" presets additionally carry the preset's text -
+// the agent plays the sound AND prominently displays the text on screen, so
+// the operator's exact wording actually reaches the other PC (not just a
+// generic ping).
+function buildAction(button) {
+  const sound = buildSoundAction(button);
+  if (button.category === "message") {
+    return { type: "message", text: button.text || "", sound };
+  }
+  return sound;
 }
 
 // Sends the sound command to one license's connected agent and resolves
@@ -423,11 +442,20 @@ io.on("connection", (socket) => {
     ack && ack({ ok: true });
   });
 
-  socket.on("admin:addButton", ({ token, label, category, systemSound, customAudio }, ack) => {
+  socket.on("admin:addButton", ({ token, label, category, text, systemSound, customAudio }, ack) => {
     if (!requireAdmin(socket, token, ack)) return;
     if (!label || !label.trim()) return ack && ack({ ok: false, error: "Informe um nome" });
     if (store.buttons.length >= MAX_BUTTONS) {
       return ack && ack({ ok: false, error: `Máximo de ${MAX_BUTTONS} botões/mensagens no total` });
+    }
+
+    const isMessage = category === "message";
+    const trimmedText = (text || "").trim();
+    if (isMessage) {
+      if (!trimmedText) return ack && ack({ ok: false, error: "Escreva o texto da mensagem" });
+      if (trimmedText.length > MAX_MESSAGE_TEXT_LENGTH) {
+        return ack && ack({ ok: false, error: `Texto muito longo (máx. ${MAX_MESSAGE_TEXT_LENGTH} caracteres)` });
+      }
     }
 
     let customAudioEntry = null;
@@ -455,7 +483,8 @@ io.on("connection", (socket) => {
     store.buttons.push({
       id: crypto.randomUUID(),
       label: label.trim(),
-      category: category === "message" ? "message" : "alert",
+      category: isMessage ? "message" : "alert",
+      text: isMessage ? trimmedText : null,
       systemSound: customAudioEntry ? null : systemSound || null,
       customAudio: customAudioEntry,
     });

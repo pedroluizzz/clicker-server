@@ -69,8 +69,12 @@
           <label>Nome</label>
           <input id="newButtonLabel" type="text" placeholder="ex: Alerta de urgência" />
         </div>
+        <div class="form-row hidden" id="messageTextRow">
+          <label>Texto da mensagem (aparece em destaque na tela do PC)</label>
+          <textarea id="newButtonText" rows="3" maxlength="300" placeholder="ex: Preciso de uma pausa de 10 minutos, por favor!"></textarea>
+        </div>
         <div class="form-row">
-          <label>Som</label>
+          <label id="soundFieldLabel">Som</label>
           <select id="newButtonSoundType">
             <option value="tone">Tom sonoro (bipe)</option>
             <option value="system">Som do sistema do Windows</option>
