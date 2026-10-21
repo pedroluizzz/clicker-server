@@ -22,8 +22,12 @@
 // code and no separate deviceId/secret pair. Whoever installs the agent on
 // a PC just types in one of the license keys an admin gave them, and it
 // connects immediately and keeps reconnecting with that same key forever.
-// An admin can deactivate/reactivate or delete a license key at any time
-// from /admin.html, without needing to touch anything on the PC itself.
+// An admin can deactivate/reactivate a license key at any time from
+// /admin.html, without needing to touch anything on the PC itself. The 10
+// DEFAULT_LICENSES keys are truly permanent (can be deactivated but never
+// deleted, and always come back exactly the same even after a restart or
+// a lost store.json) - only extra licenses created via "+ Gerar nova
+// licença" can be deleted outright.
 //
 // Custom audio: to keep every trigger fast, a command never inlines the
 // actual audio bytes - it only carries a content hash. The agent caches
@@ -97,16 +101,17 @@ const store = loadStore();
 if (!Array.isArray(store.licenses)) store.licenses = [];
 if (!Array.isArray(store.buttons)) store.buttons = [];
 
-// Make sure all 10 default licenses always exist, without touching any
-// extra ones an admin added manually (or re-adding one an admin deleted on
-// purpose would be surprising - so this only adds keys that are entirely
-// missing AND have never been explicitly removed before).
-if (!Array.isArray(store.removedDefaultLicenses)) store.removedDefaultLicenses = [];
+// Make sure all 10 default licenses ALWAYS exist and are never permanently
+// lost - these are meant to be truly fixed, so an admin can only
+// deactivate one (see admin:removeLicense below, which refuses to delete
+// a default key), never delete it outright. This also means a restart (or
+// store.json being wiped, e.g. on some free hosting plans) always brings
+// back the exact same 10 keys - nothing an agent already has saved locally
+// ever stops working just because the server restarted.
 let seededDefaults = false;
 for (const key of DEFAULT_LICENSES) {
-  const alreadyRemoved = store.removedDefaultLicenses.includes(key);
   const alreadyPresent = store.licenses.some((l) => l.key === key);
-  if (!alreadyPresent && !alreadyRemoved) {
+  if (!alreadyPresent) {
     store.licenses.push({ key, label: null, active: true });
     seededDefaults = true;
   }
@@ -173,6 +178,7 @@ function publicState() {
         active,
         online: active && !!agent,
         hostname: (agent && agent.hostname) || null,
+        isDefault: DEFAULT_LICENSES.includes(l.key),
       };
     }),
     buttons: store.buttons.map((b) => ({
@@ -404,15 +410,17 @@ io.on("connection", (socket) => {
     ack && ack({ ok: true, key });
   });
 
-  // Permanently deletes a license key. If it's one of the 10 built-in
-  // ones, remember that so it doesn't silently come back on next restart.
+  // Permanently deletes a license key - but NOT one of the 10 fixed
+  // default keys, which must always remain available (use
+  // admin:setLicenseActive to deactivate one of those instead). Only
+  // extra licenses created via admin:addLicense can actually be deleted.
   socket.on("admin:removeLicense", ({ token, key }, ack) => {
     if (!requireAdmin(socket, token, ack)) return;
+    if (DEFAULT_LICENSES.includes(key)) {
+      return ack && ack({ ok: false, error: "Essa é uma das 10 licenças fixas e não pode ser removida - desative-a em vez disso." });
+    }
     store.licenses = store.licenses.filter((l) => l.key !== key);
     agents.delete(key);
-    if (DEFAULT_LICENSES.includes(key) && !store.removedDefaultLicenses.includes(key)) {
-      store.removedDefaultLicenses.push(key);
-    }
     saveStore();
     broadcastState();
     ack && ack({ ok: true });

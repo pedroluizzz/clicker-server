@@ -200,7 +200,10 @@ function renderLicenses() {
         if (!res || !res.ok) showToast((res && res.error) || "Erro ao remover", "error");
       });
     });
-    row.appendChild(removeBtn);
+    // The 10 fixed default licenses can never be permanently deleted
+    // (only deactivated) - don't even show the button for those, so
+    // there's nothing confusing to click.
+    if (!l.isDefault) row.appendChild(removeBtn);
 
     els.licensesList.appendChild(row);
   });
